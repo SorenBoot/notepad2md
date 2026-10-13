@@ -24,7 +24,17 @@ extern "C" {
 */
 char* Markdown_Render(const char *mdtext);
 
-/* 释放 Markdown_Render() 返回的字符串 */
+/*
+  仅将 Markdown 文本转为 body 片段（不含 html/head/style 外壳）。
+
+  用于预览面板的增量刷新：拿到片段后替换内容容器的 innerHTML，
+  而不是重载整个文档，这样才能避免闪烁。
+
+  返回值同样用 Markdown_FreeHtml() 释放。
+*/
+char* Markdown_RenderFragment(const char *mdtext);
+
+/* 释放 Markdown_Render() / Markdown_RenderFragment() 返回的字符串 */
 void Markdown_FreeHtml(char *html);
 
 #ifdef __cplusplus

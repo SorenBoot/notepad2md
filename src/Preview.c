@@ -860,6 +860,91 @@ IWebBrowser2* Preview_GetBrowser(void)
 }
 
 
+/*
+  把 UTF-8 片段写进 id="md-content" 容器的 innerHTML，并保持滚动位置。
+  只改内容，不重载文档 —— 这是消除预览闪烁的关键。
+*/
+BOOL Preview_SetContent(HWND hwnd, const char *fragment)
+{
+  IWebBrowser2 *pWB;
+  IDispatch *pDisp = NULL;
+  IHTMLDocument3 *pDoc3 = NULL;
+  IHTMLElement *pEl = NULL;
+  IHTMLElement *pScrollEl = NULL;
+  IHTMLElement2 *pScrollEl2 = NULL;
+  BSTR bstrId = NULL, bstrHtml = NULL;
+  WCHAR *pwch = NULL;
+  int len, cch;
+  LONG iScrollTop = 0;
+  HRESULT hr;
+  BOOL ok = FALSE;
+
+  if (!hwnd || !fragment || !g_pSite || !g_pSite->pWB)
+    return FALSE;
+
+  pWB = g_pSite->pWB;
+  len = (int)strlen(fragment);
+
+  hr = pWB->lpVtbl->get_Document(pWB, &pDisp);
+  if (FAILED(hr) || !pDisp)
+    return FALSE;
+
+  hr = pDisp->lpVtbl->QueryInterface(pDisp, &IID_IHTMLDocument3, (void**)&pDoc3);
+  pDisp->lpVtbl->Release(pDisp);
+  if (FAILED(hr) || !pDoc3)
+    return FALSE;
+
+  bstrId = SysAllocString(L"md-content");
+  if (!bstrId)
+    goto done;
+
+  hr = pDoc3->lpVtbl->getElementById(pDoc3, bstrId, &pEl);
+  if (FAILED(hr) || !pEl)
+    goto done;   /* 外壳还没就绪，调用方会退回去做整页加载 */
+
+  /* 记下当前滚动位置（标准模式下由 documentElement 承载）*/
+  if (SUCCEEDED(pDoc3->lpVtbl->get_documentElement(pDoc3, &pScrollEl)) && pScrollEl) {
+    if (SUCCEEDED(pScrollEl->lpVtbl->QueryInterface(pScrollEl, &IID_IHTMLElement2,
+                                                     (void**)&pScrollEl2)) && pScrollEl2)
+      pScrollEl2->lpVtbl->get_scrollTop(pScrollEl2, &iScrollTop);
+  }
+
+  /* UTF-8 -> UTF-16 */
+  cch = MultiByteToWideChar(CP_UTF8, 0, fragment, len, NULL, 0);
+  if (cch < 0)
+    goto done;
+
+  pwch = (WCHAR*)malloc(((size_t)cch + 1) * sizeof(WCHAR));
+  if (!pwch)
+    goto done;
+  if (cch > 0)
+    MultiByteToWideChar(CP_UTF8, 0, fragment, len, pwch, cch);
+  pwch[cch] = L'\0';
+
+  bstrHtml = SysAllocStringLen(pwch, (UINT)cch);
+  if (!bstrHtml)
+    goto done;
+
+  hr = pEl->lpVtbl->put_innerHTML(pEl, bstrHtml);
+  ok = SUCCEEDED(hr);
+  DBG("SetContent: put_innerHTML hr=0x%08lX (%d bytes)", (unsigned long)hr, len);
+
+  /* 恢复滚动位置 */
+  if (ok && pScrollEl2)
+    pScrollEl2->lpVtbl->put_scrollTop(pScrollEl2, iScrollTop);
+
+done:
+  if (bstrHtml)  SysFreeString(bstrHtml);
+  if (bstrId)    SysFreeString(bstrId);
+  if (pwch)      free(pwch);
+  if (pScrollEl2) pScrollEl2->lpVtbl->Release(pScrollEl2);
+  if (pScrollEl) pScrollEl->lpVtbl->Release(pScrollEl);
+  if (pEl)       pEl->lpVtbl->Release(pEl);
+  if (pDoc3)     pDoc3->lpVtbl->Release(pDoc3);
+  return ok;
+}
+
+
 BOOL Preview_Show(HWND hwnd, const char *html)
 {
   return Preview_SetHtml(hwnd, html);

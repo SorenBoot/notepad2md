@@ -42,6 +42,17 @@ BOOL Preview_SetHtml(HWND hwnd, const char *html);
 /* 同 Preview_SetHtml */
 BOOL Preview_Show(HWND hwnd, const char *html);
 
+/*
+  只用 body 片段刷新预览内容（增量刷新，不重载文档）。
+
+  内部找 id 为 "md-content" 的容器改写它的 innerHTML，并保持滚动位置。
+  这避开了整页重载导致的白屏闪烁。
+
+  返回 FALSE 说明文档外壳还没就绪（此时调用方应改用 Preview_SetHtml
+  做一次完整加载）。
+*/
+BOOL Preview_SetContent(HWND hwnd, const char *fragment);
+
 /* 清空预览内容 */
 BOOL Preview_Clear(HWND hwnd);
 

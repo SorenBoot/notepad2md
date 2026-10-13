@@ -54,8 +54,8 @@ HWND      hwndMain;
 HWND      hwndNextCBChain = NULL;
 HWND      hDlgFindReplace = NULL;
 
-#define NUMTOOLBITMAPS  23
-#define NUMINITIALTOOLS 24
+#define NUMTOOLBITMAPS  24
+#define NUMINITIALTOOLS 25
 
 TBBUTTON  tbbMainWnd[] = { {0,IDT_FILE_NEW,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {1,IDT_FILE_OPEN,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
@@ -81,6 +81,7 @@ TBBUTTON  tbbMainWnd[] = { {0,IDT_FILE_NEW,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {15,IDT_VIEW_SCHEMECONFIG,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {0,0,0,TBSTYLE_SEP,0,0},
                            {16,IDT_FILE_EXIT,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
+                           {23,IDT_VIEW_MDPREVIEW,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {17,IDT_FILE_SAVEAS,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {18,IDT_FILE_SAVECOPY,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {19,IDT_EDIT_CLEAR,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
@@ -164,6 +165,7 @@ BOOL      bShowStatusbar;
 HWND      hwndPreview = NULL;      /* MSHTML 预览窗格（隐藏时不显示） */
 BOOL      bShowPreview = FALSE;    /* 预览是否可见 */
 BOOL      bPreviewInited = FALSE;  /* 预览模块是否初始化成功 */
+BOOL      bPreviewDocLoaded = FALSE; /* CSS 外壳文档是否已灌入控件 */
 
 typedef struct _wi
 {
@@ -1617,6 +1619,18 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
   SendMessage(hwndToolbar,TB_ADDBUTTONS,NUMINITIALTOOLS,(LPARAM)tbbMainWnd);
   if (Toolbar_SetButtons(hwndToolbar,IDT_FILE_NEW,tchToolbarButtons,tbbMainWnd,COUNTOF(tbbMainWnd)) == 0)
     SendMessage(hwndToolbar,TB_ADDBUTTONS,NUMINITIALTOOLS,(LPARAM)tbbMainWnd);
+
+  else if ((int)SendMessage(hwndToolbar,TB_COMMANDTOINDEX,IDT_VIEW_MDPREVIEW,0) < 0) {
+    /* 从旧版 ini 恢复的布局里没有 MD 预览按钮 —— 补上，
+       否则升级后按钮会凭空消失 */
+    int i;
+    for (i = 0; i < COUNTOF(tbbMainWnd); i++) {
+      if (tbbMainWnd[i].idCommand == IDT_VIEW_MDPREVIEW) {
+        SendMessage(hwndToolbar,TB_ADDBUTTONS,(WPARAM)1,(LPARAM)&tbbMainWnd[i]);
+        break;
+      }
+    }
+  }
   SendMessage(hwndToolbar,TB_GETITEMRECT,0,(LPARAM)&rc);
   //SendMessage(hwndToolbar,TB_SETINDENT,2,0);
 
@@ -1783,16 +1797,32 @@ void PreviewUpdate( void )
     }
   }
 
-  pchHtml = Markdown_Render(pchUtf8 ? pchUtf8 : pchText);
+  if (!bPreviewDocLoaded)
+  {
+    /* 首次（或面板刚重建）：整页加载，把 CSS 外壳一并带进去 */
+    pchHtml = Markdown_Render(pchUtf8 ? pchUtf8 : pchText);
+    if (pchHtml) {
+      if (Preview_SetHtml(hwndPreview,pchHtml))
+        bPreviewDocLoaded = TRUE;
+      Markdown_FreeHtml(pchHtml);
+    }
+  }
+
+  else
+  {
+    /* 增量刷新：只把 body 片段写进内容容器的 innerHTML，不重载文档。
+       之前每次按键都整页重载，造成明显的白屏闪烁。 */
+    pchHtml = Markdown_RenderFragment(pchUtf8 ? pchUtf8 : pchText);
+    if (pchHtml) {
+      if (!Preview_SetContent(hwndPreview,pchHtml))
+        bPreviewDocLoaded = FALSE;   /* 外壳丢了，下次做整页重载 */
+      Markdown_FreeHtml(pchHtml);
+    }
+  }
 
   LocalFree(pchText);
   if (pchUtf8)
     LocalFree(pchUtf8);
-
-  if (pchHtml) {
-    Preview_SetHtml(hwndPreview,pchHtml);
-    Markdown_FreeHtml(pchHtml);
-  }
 }
 
 /*
@@ -1819,6 +1849,7 @@ void PreviewToggle( BOOL bShow )
         bShowPreview = FALSE;
         return;
       }
+      bPreviewDocLoaded = FALSE;   /* 新控件 = 空文档，需整页加载一次 */
     }
     ShowWindow(hwndPreview,SW_SHOW);
   }
@@ -4656,6 +4687,11 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
       break;
 
 
+    case IDT_VIEW_MDPREVIEW:
+      SendMessage(hwnd,WM_COMMAND,MAKELONG(IDM_VIEW_MDPREVIEW,1),0);
+      break;
+
+
     case IDT_FILE_EXIT:
       SendMessage(hwnd,WM_CLOSE,0,0);
       break;
@@ -6212,6 +6248,7 @@ void UpdateToolbar()
   EnableTool(IDT_EDIT_CLEAR,i /*&& !bReadOnly*/);
 
   CheckTool(IDT_VIEW_WORDWRAP,fWordWrap);
+  CheckTool(IDT_VIEW_MDPREVIEW,bShowPreview);
 
 }
 

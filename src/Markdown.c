@@ -374,30 +374,15 @@ static void render_debug_log(const char *msg, const char *text, MD_SIZE size)
 /* ---- 对外接口 ---------------------------------------------------------- */
 
 /*
-  将 Markdown 文本转为完整 HTML 文档。
-
-  mdtext   —— UTF-8 或本地代码页的 Markdown 源文本（以 NUL 结尾）
-  返回     —— malloc 分配的完整 HTML 字符串，调用方用 Markdown_FreeHtml 释放
-              失败返回 NULL
-
-  注意：md4c 要求输入为 UTF-8。若输入不是 UTF-8，需先由调用方转换。
+  内部：把 Markdown 解析成 body 片段，写入调用方提供的缓冲区。
 */
-char* Markdown_Render(const char *mdtext)
+static BOOL render_body(const char *mdtext, OUTBUF *pbuf)
 {
-  OUTBUF body;
   MD_PARSER parser;
   MD_SIZE size;
   int rc;
 
-  if (!mdtext)
-    return NULL;
-
   size = (MD_SIZE)strlen(mdtext);
-
-  /* 空文档也输出合法 HTML 骨架，避免 MSHTML 加载空内容报错 */
-  outbuf_init(&body);
-  if (body.failed)
-    return NULL;
 
   memset(&parser, 0, sizeof(parser));
   parser.abi_version          = 0;
@@ -415,13 +400,62 @@ char* Markdown_Render(const char *mdtext)
   parser.debug_log            = NULL;
   parser.syntax               = NULL;
 
-  rc = md_parse(mdtext, size, &parser, &body);
+  rc = md_parse(mdtext, size, &parser, pbuf);
 
-  if (rc != 0 || body.failed) {
+  if (rc != 0 || pbuf->failed) {
     render_debug_log("md_parse failed rc=", mdtext, size);
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+
+/*
+  将 Markdown 文本转为 body 片段（不含 html/head/style 外壳）。
+
+  预览面板用它做增量刷新：只替换内容容器的 innerHTML，避免每次
+  按键都整页重载导致的白屏闪烁。
+
+  返回 malloc 分配的字符串，调用方用 Markdown_FreeHtml 释放。
+*/
+char* Markdown_RenderFragment(const char *mdtext)
+{
+  OUTBUF body;
+
+  if (!mdtext)
+    return NULL;
+
+  /* 空文档也要给出合法结果，避免上游把 NULL 当错误处理 */
+  outbuf_init(&body);
+  if (body.failed)
+    return NULL;
+
+  if (!render_body(mdtext, &body)) {
     outbuf_free(&body);
     return NULL;
   }
+
+  return body.data;   /* 所有权转移给调用方 */
+}
+
+
+/*
+  将 Markdown 文本转为完整 HTML 文档。
+
+  mdtext   —— UTF-8 的 Markdown 源文本（以 NUL 结尾）
+  返回     —— malloc 分配的完整 HTML 字符串，调用方用 Markdown_FreeHtml 释放
+              失败返回 NULL
+
+  注意：md4c 要求输入为 UTF-8。若输入不是 UTF-8，需先由调用方转换。
+*/
+char* Markdown_Render(const char *mdtext)
+{
+  char *frag;
+
+  frag = Markdown_RenderFragment(mdtext);
+  if (!frag)
+    return NULL;
 
   /* 组装完整 HTML 文档。
      样式为 IE11 兼容写法：不用 CSS 变量、不用 Grid、flexbox 用旧语法。 */
@@ -429,7 +463,7 @@ char* Markdown_Render(const char *mdtext)
     OUTBUF doc;
     outbuf_init(&doc);
     if (doc.failed) {
-      outbuf_free(&body);
+      free(frag);
       return NULL;
     }
 
@@ -516,15 +550,15 @@ char* Markdown_Render(const char *mdtext)
       "del{color:#8c959f;}\n"
       "</style>\n"
       "</head>\n"
-      "<body>\n");
+      "<body>\n"
+      "<div id=\"md-content\">\n");
 
     /* md4c 生成的 body 片段 */
-    if (body.len > 0)
-      outbuf_append(&doc, body.data, body.len);
+    outbuf_puts(&doc, frag);
 
-    outbuf_puts(&doc, "\n</body></html>\n");
+    outbuf_puts(&doc, "\n</div>\n</body></html>\n");
 
-    outbuf_free(&body);
+    free(frag);
 
     if (doc.failed) {
       outbuf_free(&doc);

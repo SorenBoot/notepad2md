@@ -16,9 +16,11 @@
 
 ## Markdown 预览
 
-- **`Ctrl+Alt+M`** 或菜单 **查看 → Markdown Preview** 开关预览
+- **工具栏最右侧的按钮**，或 **`Ctrl+Alt+M`**，或菜单 **查看 → Markdown Preview**
 - 左右各占一半，**打开 `.md` / `.markdown` / `.mdown` / `.mkd` 文件时自动开启**
 - 输入后约 120 ms 自动刷新（合并连续按键，不会每敲一个字都重排）
+- **增量刷新，不闪屏**：第一次加载完整文档，之后只改内容容器的 `innerHTML`，
+  不重载页面，因此不会白闪，滚动位置也会保留
 - 支持 GitHub 风格语法：表格、任务列表、删除线、脚注、围栏代码块
 - **中文文件无需担心编码**：UTF-8 与 GBK 等本地代码页都会自动转成 UTF-8 渲染
 - 安全：HTML 标签被转义（`NOHTML`），预览不会执行脚本
@@ -116,6 +118,7 @@ MDPreView/
 | 4 个文件 | ISO-8859 非 ASCII 字符 → ASCII | GCC 默认按 UTF-8 读源码，`0xA9` 等字节非法 |
 | `src/Notepad2.c` | 新增 `PreviewUpdate` / `PreviewToggle`，`MsgSize` 增加分栏，`SCN_MODIFIED` 防抖，菜单项与 ini 持久化 | MDPreView 功能接入 |
 | `src/Notepad2.rc` / `resource.h` | 新增菜单项 `Markdown Preview`、加速键 `Ctrl+Alt+M`、错误字符串 | 同上 |
+| `res/Toolbar.bmp` | 23 → 24 个图标，新增分栏预览图标 | 同上 |
 
 所有改动均可在 git 历史中逐条审查。
 

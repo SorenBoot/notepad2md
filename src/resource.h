@@ -349,6 +349,7 @@
 #define IDT_FILE_PRINT                  40720
 #define IDT_FILE_OPENFAV                40721
 #define IDT_FILE_ADDTOFAV               40722
+#define IDT_VIEW_MDPREVIEW              40723
 #define SC_SAVEPOS                      40800
 #define SC_RESETPOS                     40801
 #define IDS_ERR_LOADFILE                50000
