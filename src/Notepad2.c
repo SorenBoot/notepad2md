@@ -759,6 +759,10 @@ HWND InitInstance(HINSTANCE hInstance,LPSTR pszCmdLine,int nCmdShow)
   UpdateToolbar();
   UpdateStatusbar();
 
+  /* MDPreView：恢复上次的预览开关状态（此时窗口已建好，可安全创建控件）*/
+  if (bShowPreview)
+    PreviewToggle(TRUE);
+
   return(hwndMain);
 
 }
@@ -1721,13 +1725,19 @@ void MsgThemeChanged(HWND hwnd,WPARAM wParam,LPARAM lParam)
 *
 */
 /*
-  从编辑器取出全文（UTF-8）交给 Markdown 渲染器 → 刷新右侧预览面。
+  从编辑器取出全文交给 Markdown 渲染器 → 刷新右侧预览面。
   先清空未处理的定时器（合并多次按键修改，防抖）。
+
+  编码：Scintilla 缓冲区里的字节跟随文档代码页。UTF-8 文档直接可用；
+  其它代码页（如中文系统常见的 GBK/936）需先转成 UTF-8，否则 md4c
+  会把多字节字符拆碎。
 */
 void PreviewUpdate( void )
 {
   int iLen;
+  int iCodePage;
   char *pchText;
+  char *pchUtf8 = NULL;
   char *pchHtml;
 
   KillTimer(hwndMain,ID_PREVIEWTIMER);
@@ -1745,8 +1755,39 @@ void PreviewUpdate( void )
     SendMessage(hwndEdit,SCI_GETTEXT,(WPARAM)(iLen + 1),(LPARAM)pchText);
   pchText[iLen] = '\0';
 
-  pchHtml = Markdown_Render(pchText);
+  iCodePage = (int)SendMessage(hwndEdit,SCI_GETCODEPAGE,0,0);
+
+  if (iLen > 0 && iCodePage != SC_CP_UTF8)
+  {
+    /* 当前代码页 → UTF-16 → UTF-8 */
+    int cchW = MultiByteToWideChar(iCodePage,0,pchText,iLen,NULL,0);
+    if (cchW > 0)
+    {
+      LPWSTR pwch = LocalAlloc(LPTR,(cchW + 1) * sizeof(WCHAR));
+      if (pwch)
+      {
+        MultiByteToWideChar(iCodePage,0,pchText,iLen,pwch,cchW);
+        pwch[cchW] = L'\0';
+        int cbUtf8 = WideCharToMultiByte(CP_UTF8,0,pwch,cchW,NULL,0,NULL,NULL);
+        if (cbUtf8 > 0)
+        {
+          pchUtf8 = LocalAlloc(LPTR,cbUtf8 + 1);
+          if (pchUtf8)
+          {
+            WideCharToMultiByte(CP_UTF8,0,pwch,cchW,pchUtf8,cbUtf8,NULL,NULL);
+            pchUtf8[cbUtf8] = '\0';
+          }
+        }
+        LocalFree(pwch);
+      }
+    }
+  }
+
+  pchHtml = Markdown_Render(pchUtf8 ? pchUtf8 : pchText);
+
   LocalFree(pchText);
+  if (pchUtf8)
+    LocalFree(pchUtf8);
 
   if (pchHtml) {
     Preview_SetHtml(hwndPreview,pchHtml);
@@ -5242,6 +5283,9 @@ void LoadSettings()
   bShowStatusbar = IniSectionGetInt(pIniSection,L"ShowStatusbar",1);
   if (bShowStatusbar) bShowStatusbar = 1;
 
+  bShowPreview = IniSectionGetInt(pIniSection,L"MarkdownPreview",0);
+  if (bShowPreview) bShowPreview = 1;
+
   cxEncodingDlg = IniSectionGetInt(pIniSection,L"EncodingDlgSizeX",256);
   cxEncodingDlg = max(cxEncodingDlg,0);
 
@@ -5431,6 +5475,7 @@ void SaveSettings(BOOL bSaveSettingsNow)
   IniSectionSetString(pIniSection,L"ToolbarButtons",tchToolbarButtons);
   IniSectionSetInt(pIniSection,L"ShowToolbar",bShowToolbar);
   IniSectionSetInt(pIniSection,L"ShowStatusbar",bShowStatusbar);
+  IniSectionSetInt(pIniSection,L"MarkdownPreview",bShowPreview);
   IniSectionSetInt(pIniSection,L"EncodingDlgSizeX",cxEncodingDlg);
   IniSectionSetInt(pIniSection,L"EncodingDlgSizeY",cyEncodingDlg);
   IniSectionSetInt(pIniSection,L"RecodeDlgSizeX",cxRecodeDlg);

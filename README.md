@@ -6,13 +6,24 @@
 
 ## 特性
 
-- **单 exe，约 2.5 MB**（含静态 C/C++ 运行时），拷贝即用，无需安装
+- **单 exe，约 2.7 MB**（含静态 C/C++ 运行时），拷贝即用，无需安装
 - **零运行时依赖** —— 只依赖 Windows 系统 DLL（Win7 起全部自带）
-- **内存占用约 15 MB**（空载）
+- **内存占用约 40 MB**（开启预览时；MSHTML 引擎约占 25 MB），空载约 15 MB
+- **实时 Markdown 预览** —— 左右分栏，边打边看，`Ctrl+Alt+M` 开关
 - Scintilla 编辑引擎 —— 完整保留 Notepad2 的快捷键、语法高亮、查找替换
-- 实时 Markdown 预览
 - 窗口置顶（`Alt+T`）
 - 代码折叠、列选择、正则替换、编码转换
+
+## Markdown 预览
+
+- **`Ctrl+Alt+M`** 或菜单 **查看 → Markdown Preview** 开关预览
+- 左右各占一半，**打开 `.md` / `.markdown` / `.mdown` / `.mkd` 文件时自动开启**
+- 输入后约 120 ms 自动刷新（合并连续按键，不会每敲一个字都重排）
+- 支持 GitHub 风格语法：表格、任务列表、删除线、脚注、围栏代码块
+- **中文文件无需担心编码**：UTF-8 与 GBK 等本地代码页都会自动转成 UTF-8 渲染
+- 安全：HTML 标签被转义（`NOHTML`），预览不会执行脚本
+
+预览使用系统自带 **MSHTML（Trident）** 引擎，而非 WebView2：不额外分发运行时、进程内渲染、内存更省。代价是 CSS 支持止步于 IE11 水平（不支持 CSS 变量 / Grid / `flex gap`）。
 
 ## 系统要求
 
@@ -103,6 +114,8 @@ MDPreView/
 | `src/Dlapi.c` | COM 接口调用加 `(void**)` / `(const ITEMIDLIST**)` 强转 | MinGW 的 `shlobj.h` 参数类型更严格 |
 | `src/Print.cpp` | 补 `max`/`min` 宏 | MinGW 的 `minwindef.h` 不提供 |
 | 4 个文件 | ISO-8859 非 ASCII 字符 → ASCII | GCC 默认按 UTF-8 读源码，`0xA9` 等字节非法 |
+| `src/Notepad2.c` | 新增 `PreviewUpdate` / `PreviewToggle`，`MsgSize` 增加分栏，`SCN_MODIFIED` 防抖，菜单项与 ini 持久化 | MDPreView 功能接入 |
+| `src/Notepad2.rc` / `resource.h` | 新增菜单项 `Markdown Preview`、加速键 `Ctrl+Alt+M`、错误字符串 | 同上 |
 
 所有改动均可在 git 历史中逐条审查。
 

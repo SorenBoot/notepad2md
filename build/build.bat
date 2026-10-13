@@ -35,7 +35,7 @@ set DEF=-DSTATIC_BUILD -DSCI_LEXER -D_UNICODE -DUNICODE -D_WINDOWS -D_CRT_SECURE
 set INC=-I..\scintilla\include -I..\scintilla\lexlib -I..\scintilla\lexers -I..\scintilla\src -I..\src -I..\md4c -I..\res
 set OPT=-O2 -fno-ident -w
 set LDF=-m64 -static -static-libgcc -static-libstdc++ -Wl,-subsystem,windows
-set LIB=-lcomctl32 -lshlwapi -limm32 -luuid -lole32 -loleaut32 -lversion -lmshtml -lwininet
+set LIB=-lcomctl32 -lshlwapi -limm32 -luuid -lole32 -loleaut32 -lversion -lmshtml -lwininet -lgdi32 -lcomdlg32 -luser32 -lshell32 -ladvapi32
 
 set OBJS=
 
