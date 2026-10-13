@@ -1511,6 +1511,24 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
   WCHAR *pIniSection = NULL;
   int   cchIniSection = 0;
 
+#ifdef BAR_DEBUG
+#define BAR_DBG(...) do { FILE *fD = fopen("C:\\Project\\MDPreView\\bar_debug.log","a"); \
+    if (fD) { fprintf(fD,__VA_ARGS__); fputc('\n',fD); fclose(fD); } } while (0)
+#else
+#define BAR_DBG(...) ((void)0)
+#endif
+
+/* MinGW 的 commctrl.h 在 NTDDI >= Vista 时给 REBARBANDINFO 追加了
+   rcChevronLocation / uChevronState（Win8+ 的 chevron 支持），
+   sizeof 变成 128。系统 comctl32 的 rebar 只认经典布局（到 cxHeader
+   为止、按 8 字节对齐，本机为 112），cbSize 报 128 时 RB_INSERTBAND
+   会静默失败：返回 0 且不建分带，结果整条工具栏都不显示，rebar 只剩
+   4px 的 WS_BORDER 边框。
+   实测本机：128 失败（bands=0），112 和 108 均可插入成功。
+   所以上报经典布局大小，不能用 sizeof(REBARBANDINFO)。 */
+#define REBARBANDINFO_LEGACY_SIZE \
+  ((UINT)(((offsetof(REBARBANDINFO,cxHeader) + sizeof(UINT)) + 7) & ~(size_t)7))
+
   if (bShowToolbar)
     dwReBarStyle |= WS_VISIBLE;
 
@@ -1538,6 +1556,10 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
     BitmapMergeAlpha(hbmp,GetSysColor(COLOR_3DFACE));
   himl = ImageList_Create(bmp.bmWidth/NUMTOOLBITMAPS,bmp.bmHeight,ILC_COLOR32|ILC_MASK,0,0);
   ImageList_AddMasked(himl,hbmp,CLR_DEFAULT);
+  BAR_DBG("mainbitmap bmp=%dx%d /%d iconsize=%d himl=%p images=%d",
+          (int)bmp.bmWidth,(int)bmp.bmHeight,NUMTOOLBITMAPS,
+          (int)(bmp.bmWidth/NUMTOOLBITMAPS),(void*)himl,
+          himl?ImageList_GetImageCount(himl):-1);
   DeleteObject(hbmp);
   SendMessage(hwndToolbar,TB_SETIMAGELIST,0,(LPARAM)himl);
 
@@ -1623,15 +1645,32 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
   else if ((int)SendMessage(hwndToolbar,TB_COMMANDTOINDEX,IDT_VIEW_MDPREVIEW,0) < 0) {
     /* 从旧版 ini 恢复的布局里没有 MD 预览按钮 —— 补上，
        否则升级后按钮会凭空消失 */
-    int i;
-    for (i = 0; i < COUNTOF(tbbMainWnd); i++) {
-      if (tbbMainWnd[i].idCommand == IDT_VIEW_MDPREVIEW) {
-        SendMessage(hwndToolbar,TB_ADDBUTTONS,(WPARAM)1,(LPARAM)&tbbMainWnd[i]);
+    int iLook;
+    for (iLook = 0; iLook < COUNTOF(tbbMainWnd); iLook++) {
+      if (tbbMainWnd[iLook].idCommand == IDT_VIEW_MDPREVIEW) {
+        SendMessage(hwndToolbar,TB_ADDBUTTONS,(WPARAM)1,(LPARAM)&tbbMainWnd[iLook]);
         break;
       }
     }
   }
-  SendMessage(hwndToolbar,TB_GETITEMRECT,0,(LPARAM)&rc);
+  {
+    LRESULT lrGet = SendMessage(hwndToolbar,TB_GETITEMRECT,0,(LPARAM)&rc);
+    BAR_DBG("btncount=%d getitemrect_ok=%ld rc=%ld,%ld,%ld,%ld btnsize=%ld",
+            (int)SendMessage(hwndToolbar,TB_BUTTONCOUNT,0,0),(long)lrGet,
+            (long)rc.left,(long)rc.top,(long)rc.right,(long)rc.bottom,
+            (long)SendMessage(hwndToolbar,TB_GETBUTTONSIZE,0,0));
+    {
+      int iBtn;
+      for (iBtn = 0; iBtn < (int)SendMessage(hwndToolbar,TB_BUTTONCOUNT,0,0); iBtn++) {
+        RECT rb; TBBUTTON tbi;
+        if (!SendMessage(hwndToolbar,TB_GETITEMRECT,(WPARAM)iBtn,(LPARAM)&rb)) break;
+        SendMessage(hwndToolbar,TB_GETBUTTON,(WPARAM)iBtn,(LPARAM)&tbi);
+        BAR_DBG("  btn[%d] x=%ld..%ld id=%d md=%d", iBtn,
+                (long)rb.left,(long)rb.right,(int)tbi.idCommand,
+                tbi.idCommand == IDT_VIEW_MDPREVIEW);
+      }
+    }
+  }
   //SendMessage(hwndToolbar,TB_SETINDENT,2,0);
 
   if (bShowStatusbar)
@@ -1648,7 +1687,7 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
   rbi.himl   = (HIMAGELIST)NULL;
   SendMessage(hwndReBar,RB_SETBARINFO,0,(LPARAM)&rbi);
 
-  rbBand.cbSize  = sizeof(REBARBANDINFO);
+  rbBand.cbSize  = REBARBANDINFO_LEGACY_SIZE;   /* 不是 sizeof(REBARBANDINFO)，见上 */
   rbBand.fMask   = /*RBBIM_COLORS | RBBIM_TEXT | RBBIM_BACKGROUND | */
                    RBBIM_STYLE | RBBIM_CHILD | RBBIM_CHILDSIZE /*| RBBIM_SIZE*/;
   rbBand.fStyle  = /*RBBS_CHILDEDGE |*//* RBBS_BREAK |*/ RBBS_FIXEDSIZE /*| RBBS_GRIPPERALWAYS*/;
@@ -1660,7 +1699,16 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
   rbBand.cxMinChild = (rc.right - rc.left) * COUNTOF(tbbMainWnd);
   rbBand.cyMinChild = (rc.bottom - rc.top) + 2 * rc.top;
   rbBand.cx         = 0;
-  SendMessage(hwndReBar,RB_INSERTBAND,(WPARAM)-1,(LPARAM)&rbBand);
+  {
+    LRESULT lrIns = SendMessage(hwndReBar,RB_INSERTBAND,(WPARAM)-1,(LPARAM)&rbBand);
+    RECT rcRb;
+    GetWindowRect(hwndReBar,&rcRb);
+    BAR_DBG("rebar cbSize=%d sizeof=%d insert_ok=%ld bands=%d rebar=%ldx%ld cxMin=%u cyMin=%u",
+            (int)rbBand.cbSize,(int)sizeof(REBARBANDINFO),(long)lrIns,
+            (int)SendMessage(hwndReBar,RB_GETBANDCOUNT,0,0),
+            (long)(rcRb.right-rcRb.left),(long)(rcRb.bottom-rcRb.top),
+            (unsigned)rbBand.cxMinChild,(unsigned)rbBand.cyMinChild);
+  }
 
   SetWindowPos(hwndReBar,NULL,0,0,0,0,SWP_NOZORDER);
   GetWindowRect(hwndReBar,&rc);
