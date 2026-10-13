@@ -6,17 +6,30 @@
 
 ## 特性
 
-- **单 exe，约 2.7 MB**（含静态 C/C++ 运行时），拷贝即用，无需安装
+- **单 exe，约 2.9 MB**（含静态 C/C++ 运行时），拷贝即用，无需安装
 - **零运行时依赖** —— 只依赖 Windows 系统 DLL（Win7 起全部自带）
 - **内存占用约 40 MB**（开启预览时；MSHTML 引擎约占 25 MB），空载约 15 MB
 - **实时 Markdown 预览** —— 左右分栏，边打边看，`Ctrl+Alt+M` 开关
+- **简体中文界面** —— 菜单、对话框、状态栏、提示信息全部汉化
 - Scintilla 编辑引擎 —— 完整保留 Notepad2 的快捷键、语法高亮、查找替换
 - 窗口置顶（`Alt+T`）
 - 代码折叠、列选择、正则替换、编码转换
 
+![界面截图](docs/screenshot.png)
+
+### 界面语言
+
+资源文件里同时打包了**简体中文**和**英文**两套界面，Windows 会按系统区域自动选择：
+
+- 系统区域为中文（中国大陆）→ 显示中文界面
+- 其他区域 → 显示英文界面
+
+如要在中文系统上强制使用英文界面，可用 [Resource Hacker](http://www.angusj.com/resourcehacker/)
+等工具调整资源语言，或把 `src/Notepad2.rc` 里中文块结尾的 `#endif` 注释掉后重新编译。
+
 ## Markdown 预览
 
-- **工具栏最右侧的按钮**，或 **`Ctrl+Alt+M`**，或菜单 **查看 → Markdown Preview**
+- **工具栏最右侧的按钮**，或 **`Ctrl+Alt+M`**，或菜单 **查看(V) → Markdown 预览**
 - 左右各占一半，**打开 `.md` / `.markdown` / `.mdown` / `.mkd` 文件时自动开启**
 - 输入后约 120 ms 自动刷新（合并连续按键，不会每敲一个字都重排）
 - **增量刷新，不闪屏**：第一次加载完整文档，之后只改内容容器的 `innerHTML`，
@@ -118,7 +131,24 @@ MDPreView/
 | 4 个文件 | ISO-8859 非 ASCII 字符 → ASCII | GCC 默认按 UTF-8 读源码，`0xA9` 等字节非法 |
 | `src/Notepad2.c` | 新增 `PreviewUpdate` / `PreviewToggle`，`MsgSize` 增加分栏，`SCN_MODIFIED` 防抖，菜单项与 ini 持久化 | MDPreView 功能接入 |
 | `src/Notepad2.rc` / `resource.h` | 新增菜单项 `Markdown Preview`、加速键 `Ctrl+Alt+M`、错误字符串 | 同上 |
-| `res/Toolbar.bmp` | 23 → 24 个图标，新增分栏预览图标 | 同上 |
+| `src/Notepad2.rc` | 末尾新增 `LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED` 中文资源块 | 中文界面 |
+| `res/Notepad2.ico` | 换成含 128×128 的多尺寸图标 | 大图标不再模糊 |
+| `res/Toolbar.bmp` | 23 → 24 个图标，新增分栏预览图标 | MDPreView 功能 |
+| `build/Makefile` | ① windres 规则补上 `res/` 依赖；② `REBARBANDINFO.cbSize` 用兼容值 | 见下 |
+
+### 两个 MinGW 特有的坑（已修）
+
+1. **工具栏完全看不见** —— MinGW 的 `commctrl.h` 在 `NTDDI_VERSION >= 0x06000000` 时会给
+   `REBARBANDINFO` 追加 `rcChevronLocation` / `uChevronState`，`sizeof` 变成 128 字节，
+   而系统的 comctl32 只认传统的 112 字节布局，于是 `RB_INSERTBAND` **静默失败**（返回 0、
+   不插入），rebar 始终没有 band，工具栏宽度为 0。
+   修法：向 rebar 报告传统布局大小（`REBARBANDINFO_LEGACY_SIZE`）。
+
+2. **改了图标不生效** —— windres 规则原先只依赖 `.rc` 与 `resource.h`，修改 `res/` 下的
+   图标/位图只会重新链接而不重新编译资源，exe 里还是旧图。已把 `res/` 下所有文件列为依赖。
+
+> 注意：用 `-DPREVIEW_DEBUG` / `-DBAR_DEBUG` 做过调试构建后，请先 `make clean`
+> 再构建发布版，否则调试版的 `.o` 会被复用（里面带着写日志文件的代码）。
 
 所有改动均可在 git 历史中逐条审查。
 

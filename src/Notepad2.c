@@ -1659,17 +1659,6 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
             (int)SendMessage(hwndToolbar,TB_BUTTONCOUNT,0,0),(long)lrGet,
             (long)rc.left,(long)rc.top,(long)rc.right,(long)rc.bottom,
             (long)SendMessage(hwndToolbar,TB_GETBUTTONSIZE,0,0));
-    {
-      int iBtn;
-      for (iBtn = 0; iBtn < (int)SendMessage(hwndToolbar,TB_BUTTONCOUNT,0,0); iBtn++) {
-        RECT rb; TBBUTTON tbi;
-        if (!SendMessage(hwndToolbar,TB_GETITEMRECT,(WPARAM)iBtn,(LPARAM)&rb)) break;
-        SendMessage(hwndToolbar,TB_GETBUTTON,(WPARAM)iBtn,(LPARAM)&tbi);
-        BAR_DBG("  btn[%d] x=%ld..%ld id=%d md=%d", iBtn,
-                (long)rb.left,(long)rb.right,(int)tbi.idCommand,
-                tbi.idCommand == IDT_VIEW_MDPREVIEW);
-      }
-    }
   }
   //SendMessage(hwndToolbar,TB_SETINDENT,2,0);
 
