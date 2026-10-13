@@ -96,8 +96,7 @@ static const CLSID CLSID_WebBrowser_ = {
 typedef struct tagHostSite {
   IOleInPlaceSite      site;      /* 必须第一个成员：vtable 布局兼容 */
   IOleClientSite       client;    /* 独立 vtable，单独计数 */
-  IOleInPlaceFrame     frame;
-  IOleInPlaceUIWindow  uiw;
+  IOleInPlaceFrame     frame;    /* 同时充当 IOleInPlaceUIWindow（见下）*/
   LONG                 refs;
 
   HWND                 hwndHost;
@@ -144,8 +143,12 @@ static HRESULT STDMETHODCALLTYPE Site_QueryInterface(IOleInPlaceSite *This,
     DBG("  -> matched IOleInPlaceFrame, returning frame");
   }
   else if (IsEqualIID(riid, &IID_IOleInPlaceUIWindow)) {
-    *ppv = &s->uiw;
-    DBG("  -> matched IOleInPlaceUIWindow, returning uiw");
+    /* 返回 frame 而非单独对象：IOleInPlaceFrame 继承自 IOleInPlaceUIWindow，
+       前 8 项 vtable 完全一致，所以这是合法的 QI 结果；
+       而调用方（ieframe）习惯把拿到的文档层站点直接当 IOleInPlaceFrame 用，
+       若给它一个只有 8 项的 vtable，第 8 项 SetActiveObject 就会越界读到 NULL。 */
+    *ppv = &s->frame;
+    DBG("  -> matched IOleInPlaceUIWindow, returning frame");
   }
   else {
     DBG("  -> NO INTERFACE");
@@ -273,15 +276,20 @@ static HRESULT STDMETHODCALLTYPE Site_GetWindowContext(
   if (!ppFrame || !ppDoc || !prcPosRect || !prcClipRect || !lpFrameInfo)
     return E_POINTER;
 
+  /* 两个槽都返回 frame 对象。
+     ppDoc 的类型是 IOleInPlaceUIWindow，而 IOleInPlaceFrame 继承自它，
+     所以同一个对象满足两者。宿主实现普遍这么做，因为调用方会把 ppDoc
+     当 IOleInPlaceFrame 使用（ieframe 就是这样调 SetActiveObject 的）。 */
   *ppFrame = &s->frame;
-  *ppDoc   = &s->uiw;           /* 文档层站点：返回真接口，不能是 NULL */
+  *ppDoc   = (IOleInPlaceUIWindow*)&s->frame;
 
   s->frame.lpVtbl->AddRef(&s->frame);
-  s->uiw.lpVtbl->AddRef(&s->uiw);
+  s->frame.lpVtbl->AddRef(&s->frame);   /* ppDoc 也持一份引用 */
 
   *prcPosRect  = s->rc;
   *prcClipRect = s->rc;
 
+  lpFrameInfo->cb           = sizeof(OLEINPLACEFRAMEINFO);
   lpFrameInfo->fMDIApp      = FALSE;
   lpFrameInfo->hwndFrame    = s->hwndHost;
   lpFrameInfo->haccel       = NULL;
@@ -457,64 +465,6 @@ static HRESULT STDMETHODCALLTYPE Frame_TranslateAccelerator(
 }
 
 
-/* ---- IOleInPlaceUIWindow ----------------------------------------------- */
-/* 布局：IUnknown(3) + IOleWindow(2) + GetBorder/RequestBorderSpace/
-   SetBorderSpace(3)。与 IOleInPlaceFrame 不同，无菜单/状态栏方法。 */
-
-static HRESULT STDMETHODCALLTYPE UIW_QueryInterface(IOleInPlaceUIWindow *This,
-                                                      REFIID riid, void **ppv)
-{
-  HostSite *s = (HostSite*)((char*)This - offsetof(HostSite, uiw));
-  return Site_QueryInterface(&s->site, riid, ppv);
-}
-
-static ULONG STDMETHODCALLTYPE UIW_AddRef(IOleInPlaceUIWindow *This)
-{
-  HostSite *s = (HostSite*)((char*)This - offsetof(HostSite, uiw));
-  return (ULONG)InterlockedIncrement(&s->refs);
-}
-
-static ULONG STDMETHODCALLTYPE UIW_Release(IOleInPlaceUIWindow *This)
-{
-  HostSite *s = (HostSite*)((char*)This - offsetof(HostSite, uiw));
-  return Site_Release(&s->site);
-}
-
-static HRESULT STDMETHODCALLTYPE UIW_GetWindow(IOleInPlaceUIWindow *This, HWND *phwnd)
-{
-  HostSite *s = (HostSite*)((char*)This - offsetof(HostSite, uiw));
-  if (!phwnd) return E_POINTER;
-  *phwnd = s->hwndHost;
-  return S_OK;
-}
-
-static HRESULT STDMETHODCALLTYPE UIW_ContextSensitiveHelp(IOleInPlaceUIWindow *This, BOOL f)
-{
-  (void)This; (void)f;
-  return E_NOTIMPL;
-}
-
-static HRESULT STDMETHODCALLTYPE UIW_GetBorder(IOleInPlaceUIWindow *This, LPRECT prc)
-{
-  (void)This; (void)prc;
-  return E_NOTIMPL;
-}
-
-static HRESULT STDMETHODCALLTYPE UIW_RequestBorderSpace(
-    IOleInPlaceUIWindow *This, LPCBORDERWIDTHS pbw)
-{
-  (void)This; (void)pbw;
-  return E_NOTIMPL;
-}
-
-static HRESULT STDMETHODCALLTYPE UIW_SetBorderSpace(
-    IOleInPlaceUIWindow *This, LPCBORDERWIDTHS pbw)
-{
-  (void)This; (void)pbw;
-  return E_NOTIMPL;
-}
-
-
 /* ---- vtable 定义 ------------------------------------------------------- */
 
 static IOleInPlaceSiteVtbl g_vtblSite = {
@@ -565,18 +515,6 @@ static IOleInPlaceFrameVtbl g_vtblFrame = {
   Frame_TranslateAccelerator
 };
 
-static IOleInPlaceUIWindowVtbl g_vtblUIW = {
-  UIW_QueryInterface,
-  UIW_AddRef,
-  UIW_Release,
-  UIW_GetWindow,
-  UIW_ContextSensitiveHelp,
-  UIW_GetBorder,
-  UIW_RequestBorderSpace,
-  UIW_SetBorderSpace
-};
-
-
 /* ---- 站点构造 ---------------------------------------------------------- */
 
 
@@ -589,7 +527,6 @@ static HostSite* Site_Create(HWND hwndHost)
   s->site.lpVtbl    = &g_vtblSite;
   s->client.lpVtbl  = &g_vtblClient;
   s->frame.lpVtbl   = &g_vtblFrame;
-  s->uiw.lpVtbl     = &g_vtblUIW;
   s->refs           = 1;
   s->hwndHost       = hwndHost;
   GetClientRect(hwndHost, &s->rc);
