@@ -1,0 +1,43 @@
+# 统一换行符：仓库内存 LF，签出时按平台转换
+* text=auto eol=lf
+
+# ---- 明确指定文本类型 ----
+*.c        text
+*.h        text
+*.cxx      text
+*.cpp      text
+*.hpp      text
+*.rc       text
+*.in       text
+*.ini      text
+*.md       text
+*.txt      text
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+*.ps1      text eol=crlf
+
+# ---- 二进制文件（禁止 diff/merge）----
+*.ico      binary
+*.cur      binary
+*.bmp      binary
+*.png      binary
+*.gif      binary
+*.jpg      binary
+*.exe      binary
+*.dll      binary
+*.lib      binary
+*.a        binary
+*.o        binary
+*.obj      binary
+*.pdb      binary
+*.7z       binary
+*.zip      binary
+
+# ---- Makefile 无扩展名，强制文本 ----
+Makefile   text
+
+# ---- diff 时 C/C++ 显示函数名 ----
+*.c        diff=cpp
+*.h        diff=cpp
+*.cxx      diff=cpp
+*.cpp      diff=cpp

@@ -1,0 +1,70 @@
+# ============================================================================
+#  MDPreView — 构建产物与 IDE 生成物（永不入库）
+# ============================================================================
+
+# ---- 编译产物 ----
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.res
+*.manifest.tmp
+
+# ---- 构建目录 ----
+build/obj/
+bin/
+Release/
+Release64/
+Debug/
+Debug64/
+dist/
+
+# ---- Visual Studio / VS Code ----
+.vs/
+.vscode/
+*.user
+*.suo
+*.aps
+*. VC.db
+*.opendb
+*.sdf
+*.ipch
+*.ncb
+
+# ---- MinGW / CMake ----
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.bak
+
+# ---- 运行时生成的配置（用户本地设置，不进仓库）----
+*.ini
+
+# ---- 系统垃圾 ----
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# ---- 临时文件 ----
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*~
+*.swp
+*.log
+_build_*.txt
+
+# ---- 归档（源码已入库，不再需要分发压缩包）----
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
