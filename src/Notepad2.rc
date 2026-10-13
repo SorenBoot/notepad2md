@@ -274,6 +274,8 @@ BEGIN
         MENUITEM "Zoom &In\tCtrl++",            IDM_VIEW_ZOOMIN
         MENUITEM "Zoom &Out\tCtrl+-",           IDM_VIEW_ZOOMOUT
         MENUITEM "Reset &Zoom\tCtrl+/",         IDM_VIEW_RESETZOOM
+        MENUITEM SEPARATOR
+        MENUITEM "Markdown Pre&view\tCtrl+Alt+M", IDM_VIEW_MDPREVIEW
     END
     POPUP "&Settings"
     BEGIN
@@ -515,6 +517,7 @@ BEGIN
     VK_F6,          IDM_FILE_SAVEAS,        VIRTKEY, NOINVERT
     VK_F6,          IDM_FILE_SAVECOPY,      VIRTKEY, CONTROL, NOINVERT
     VK_F7,          IDM_VIEW_SAVESETTINGSNOW, VIRTKEY, NOINVERT
+    "M",            IDM_VIEW_MDPREVIEW,     VIRTKEY, CONTROL, ALT, NOINVERT
     VK_F7,          CMD_OPENINIFILE,        VIRTKEY, CONTROL, NOINVERT
     VK_F8,          IDM_ENCODING_RECODE,    VIRTKEY, NOINVERT
     VK_F8,          IDM_EDIT_INSERT_ENCODING, VIRTKEY, CONTROL, NOINVERT
@@ -1524,6 +1527,7 @@ BEGIN
     IDS_WRITEINI_FAIL       "Error writing settings to configuration file."
     IDS_SETTINGSNOTSAVED    "No existing configuration file was found.\nTo keep your style modifications, save settings now (F7) or go back to scheme configuration (Ctrl+F12) and export your styles."
     IDS_EXPORT_FAIL         "Error exporting style settings to ""%s""."
+    IDS_PREVIEW_ERROR       "Failed to create the Markdown preview control."
 END
 
 STRINGTABLE

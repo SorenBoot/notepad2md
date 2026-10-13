@@ -79,6 +79,7 @@ typedef struct np2params {
 
 //==== Change Notifications ===================================================
 #define ID_WATCHTIMER 0xA000
+#define ID_PREVIEWTIMER 0xA002
 #define WM_CHANGENOTIFY WM_USER+1
 //#define WM_CHANGENOTIFYCLEAR WM_USER+2
 
@@ -124,6 +125,10 @@ int  CreateIniFileEx(LPCWSTR);
 void UpdateStatusbar();
 void UpdateToolbar();
 void UpdateLineNumberWidth();
+
+/* MDPreView 实时预览 */
+void PreviewUpdate(void);
+void PreviewToggle(BOOL bShow);
 
 
 BOOL FileIO(BOOL,LPCWSTR,BOOL,int*,int*,BOOL*,BOOL*,BOOL*,BOOL);

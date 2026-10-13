@@ -322,6 +322,7 @@
 #define IDM_VIEW_STATUSBAR              40442
 #define IDM_VIEW_SAVESETTINGS           40443
 #define IDM_VIEW_SAVESETTINGSNOW        40444
+#define IDM_VIEW_MDPREVIEW              40445
 #define IDM_HELP_ABOUT                  40500
 #define IDM_TRAY_RESTORE                40600
 #define IDM_TRAY_EXIT                   40601
@@ -391,6 +392,7 @@
 #define IDS_WRITEINI_FAIL               50038
 #define IDS_SETTINGSNOTSAVED            50039
 #define IDS_EXPORT_FAIL                 50040
+#define IDS_PREVIEW_ERROR               50041
 #define IDS_CMDLINEHELP                 60000
 
 // Next default values for new objects

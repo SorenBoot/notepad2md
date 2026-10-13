@@ -35,6 +35,8 @@
 #include "dialogs.h"
 #include "helpers.h"
 #include "resource.h"
+#include "Markdown.h"
+#include "Preview.h"
 
 
 
@@ -158,6 +160,11 @@ BOOL      bTransparentModeAvailable;
 BOOL      bShowToolbar;
 BOOL      bShowStatusbar;
 
+/* MDPreView：实时 Markdown 预览 */
+HWND      hwndPreview = NULL;      /* MSHTML 预览窗格（隐藏时不显示） */
+BOOL      bShowPreview = FALSE;    /* 预览是否可见 */
+BOOL      bPreviewInited = FALSE;  /* 预览模块是否初始化成功 */
+
 typedef struct _wi
 {
   int x;
@@ -175,6 +182,7 @@ int     cyReBar;
 int     cyReBarFrame;
 int     cxEditFrame;
 int     cyEditFrame;
+int     cxPreviewSplit;
 
 int     cxEncodingDlg;
 int     cyEncodingDlg;
@@ -798,6 +806,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
         // Terminate file watching
         InstallFileWatching(NULL);
 
+        // MDPreView: release preview control
+        if (IsWindow(hwndPreview))
+          DestroyWindow(hwndPreview);
+        hwndPreview = NULL;
+        if (bPreviewInited) {
+          Preview_Shutdown();
+          bPreviewInited = FALSE;
+        }
+
         // GetWindowPlacement
         wndpl.length = sizeof(WINDOWPLACEMENT);
         GetWindowPlacement(hwnd,&wndpl);
@@ -888,6 +905,11 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
 
     //case WM_TIMER:
     //  break;
+
+    case WM_TIMER:
+      if (wParam == ID_PREVIEWTIMER)
+        PreviewUpdate();
+      break;
 
 
     case WM_SIZE:
@@ -1693,6 +1715,90 @@ void MsgThemeChanged(HWND hwnd,WPARAM wParam,LPARAM lParam)
 //  MsgSize() - Handles WM_SIZE
 //
 //
+/******************************************************************************
+*
+* MDPreView: Live Markdown Preview
+*
+*/
+/*
+  从编辑器取出全文（UTF-8）交给 Markdown 渲染器 → 刷新右侧预览面。
+  先清空未处理的定时器（合并多次按键修改，防抖）。
+*/
+void PreviewUpdate( void )
+{
+  int iLen;
+  char *pchText;
+  char *pchHtml;
+
+  KillTimer(hwndMain,ID_PREVIEWTIMER);
+
+  if (!bShowPreview || !IsWindow(hwndPreview))
+    return;
+
+  iLen = (int)SendMessage(hwndEdit,SCI_GETLENGTH,0,0);
+
+  pchText = LocalAlloc(LPTR,(iLen + 1) * sizeof(char));
+  if (!pchText)
+    return;
+
+  if (iLen > 0)
+    SendMessage(hwndEdit,SCI_GETTEXT,(WPARAM)(iLen + 1),(LPARAM)pchText);
+  pchText[iLen] = '\0';
+
+  pchHtml = Markdown_Render(pchText);
+  LocalFree(pchText);
+
+  if (pchHtml) {
+    Preview_SetHtml(hwndPreview,pchHtml);
+    Markdown_FreeHtml(pchHtml);
+  }
+}
+
+/*
+  切换预览面。首次显示时才创建控件（省内存）。
+*/
+void PreviewToggle( BOOL bShow )
+{
+  RECT rc;
+
+  if (bShow == bShowPreview && !(bShow && !IsWindow(hwndPreview)))
+    return;
+
+  if (bShow) {
+    if (!bPreviewInited) {
+      bPreviewInited = Preview_Init(g_hInstance);
+      if (!bPreviewInited)
+        return;
+    }
+    if (!IsWindow(hwndPreview)) {
+      hwndPreview = Preview_Create(hwndMain,g_hInstance);
+      if (!hwndPreview) {
+        MsgBox(MBWARN,IDS_PREVIEW_ERROR);
+        bPreviewInited = FALSE;
+        bShowPreview = FALSE;
+        return;
+      }
+    }
+    ShowWindow(hwndPreview,SW_SHOW);
+  }
+  else {
+    if (IsWindow(hwndPreview))
+      ShowWindow(hwndPreview,SW_HIDE);
+  }
+
+  bShowPreview = bShow;
+
+  CheckCmd(GetMenu(hwndMain),IDM_VIEW_MDPREVIEW,bShowPreview);
+
+  /* 重排布局 */
+  GetClientRect(hwndMain,&rc);
+  MsgSize(hwndMain,SIZE_RESTORED,MAKELONG(rc.right,rc.bottom));
+
+  if (bShowPreview)
+    PreviewUpdate();
+}
+
+
 void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
 {
 
@@ -1738,14 +1844,37 @@ void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
     cy -= (rc.bottom - rc.top);
   }
 
-  hdwp = BeginDeferWindowPos(2);
+  hdwp = BeginDeferWindowPos(3);
 
-  DeferWindowPos(hdwp,hwndEditFrame,NULL,x,y,cx,cy,
-                 SWP_NOZORDER | SWP_NOACTIVATE);
+  if (bShowPreview && IsWindow(hwndPreview))
+  {
+    int cxEdit = (cx - cxPreviewSplit) / 2;
+    if (cxEdit < 120)
+      cxEdit = 120;
+    if (cxEdit > cx - 120)
+      cxEdit = cx - 120;
 
-  DeferWindowPos(hdwp,hwndEdit,NULL,x+cxEditFrame,y+cyEditFrame,
-                 cx-2*cxEditFrame,cy-2*cyEditFrame,
-                 SWP_NOZORDER | SWP_NOACTIVATE);
+    DeferWindowPos(hdwp,hwndEditFrame,NULL,x,y,cxEdit,cy,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+
+    DeferWindowPos(hdwp,hwndEdit,NULL,x+cxEditFrame,y+cyEditFrame,
+                   cxEdit-2*cxEditFrame,cy-2*cyEditFrame,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+
+    DeferWindowPos(hdwp,hwndPreview,NULL,x+cxEdit+cxPreviewSplit,y,
+                   cx-cxEdit-cxPreviewSplit,cy,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+  }
+
+  else
+  {
+    DeferWindowPos(hdwp,hwndEditFrame,NULL,x,y,cx,cy,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+
+    DeferWindowPos(hdwp,hwndEdit,NULL,x+cxEditFrame,y+cyEditFrame,
+                   cx-2*cxEditFrame,cy-2*cyEditFrame,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+  }
 
   EndDeferWindowPos(hdwp);
 
@@ -1919,6 +2048,7 @@ void MsgInitMenu(HWND hwnd,WPARAM wParam,LPARAM lParam)
   CheckCmd(hmenu,IDM_VIEW_USE2NDDEFAULT,Style_GetUse2ndDefault(hwndEdit));
 
   CheckCmd(hmenu,IDM_VIEW_WORDWRAP,fWordWrap);
+  CheckCmd(hmenu,IDM_VIEW_MDPREVIEW,bShowPreview);
   CheckCmd(hmenu,IDM_VIEW_LONGLINEMARKER,bMarkLongLines);
   CheckCmd(hmenu,IDM_VIEW_TABSASSPACES,bTabsAsSpaces);
   CheckCmd(hmenu,IDM_VIEW_SHOWINDENTGUIDES,bShowIndentGuides);
@@ -3680,6 +3810,10 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
       break;
 
 
+    case IDM_VIEW_MDPREVIEW:
+      PreviewToggle(!bShowPreview);
+      break;
+
     case IDM_VIEW_ALWAYSONTOP:
       if ((bAlwaysOnTop || flagAlwaysOnTop == 2) && flagAlwaysOnTop != 1) {
         bAlwaysOnTop = 0;
@@ -4752,6 +4886,8 @@ LRESULT MsgNotify(HWND hwnd,WPARAM wParam,LPARAM lParam)
         case SCN_MODIFIED:
         case SCN_ZOOM:
           UpdateLineNumberWidth();
+          if (bShowPreview)
+            SetTimer(hwnd,ID_PREVIEWTIMER,120,NULL);
           break;
 
         case SCN_SAVEPOINTREACHED:
@@ -6337,6 +6473,13 @@ BOOL FileLoad(BOOL bDontSave,BOOL bNew,BOOL bReload,BOOL bNoEncDetect,LPCWSTR lp
     if (!bReload && bResetFileWatching)
       iFileWatchingMode = 0;
     InstallFileWatching(szCurFile);
+
+    // MDPreView: 打开 Markdown 文件时自动开启预览
+    if (PathMatchSpec(szCurFile,L"*.md") ||
+        PathMatchSpec(szCurFile,L"*.markdown") ||
+        PathMatchSpec(szCurFile,L"*.mdown") ||
+        PathMatchSpec(szCurFile,L"*.mkd"))
+      PreviewToggle(TRUE);
 
     // the .LOG feature ...
     if (SendMessage(hwndEdit,SCI_GETLENGTH,0,0) >= 4) {
