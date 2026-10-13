@@ -118,6 +118,13 @@ CXX_OBJ := $(N2_CXX_SRC:.cpp=.o) $(SCI_SRC:.cxx=.o) $(SCI_LEXERS:.cxx=.o)
 RES_OBJ := obj/Notepad2_res.o
 OBJ     := $(C_OBJ) $(CXX_OBJ) $(RES_OBJ)
 
+# 资源文件：改图标/位图也必须触发 windres 重编，否则 exe 里还是旧的
+RES_FILES := \
+	../res/Notepad2.ico ../res/Run.ico ../res/Styles.ico \
+	../res/Toolbar.bmp ../res/Open.bmp ../res/Next.bmp \
+	../res/Prev.bmp ../res/Pick.bmp ../res/Encoding.bmp \
+	../res/Copy.cur ../res/Notepad2.exe.manifest
+
 # ---- 规则 -----------------------------------------------------------------
 .PHONY: all clean run dirs
 
@@ -139,7 +146,7 @@ $(TARGET): $(OBJ)
 %.o: %.cpp
 	$(CXX) $(ARCH) $(DEFINES) $(INCLUDES) $(OPT) $(WARN) -c $< -o $@
 
-$(RES_OBJ): ../src/Notepad2.rc ../src/resource.h
+$(RES_OBJ): ../src/Notepad2.rc ../src/resource.h $(RES_FILES)
 	$(RC) $(DEFINES) -I../res -I../src -o $@ $<
 
 run: all
