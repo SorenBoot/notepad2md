@@ -1,6 +1,6 @@
 /*===========================================================================
 
-  MDPreView — 预览控件模块接口
+  notepad2md — 预览控件模块接口
 
   ===========================================================================*/
 
@@ -55,6 +55,17 @@ BOOL Preview_SetContent(HWND hwnd, const char *fragment);
 
 /* 清空预览内容 */
 BOOL Preview_Clear(HWND hwnd);
+
+/*
+  把预览滚动到第 idxHeading 个标题（0 基）处。用于编辑器/预览滚动同步。
+
+  iTotalHeadings 是调用方按源码扫描出的标题总数。若它与预览 DOM 里实际的
+  标题数不符（说明扫描器与渲染器对标题的判断有分歧），本函数不做任何操作
+  —— 宁可不同步，也不能跳到错误的位置。
+
+  返回 TRUE 表示脚本已下发。
+*/
+BOOL Preview_ScrollToHeading(HWND hwnd, int idxHeading, int iTotalHeadings);
 
 /*
   取得内部 IWebBrowser2 接口（引用计数不变，调用方不得 Release）。

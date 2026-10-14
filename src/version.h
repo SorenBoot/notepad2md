@@ -1,19 +1,20 @@
 /******************************************************************************
 *
 *
-* Notepad2
+* notepad2md
 *
 * version.h
-*   Notepad2 version information
+*   notepad2md version information
 *
-* See Readme.txt for more information about this source code.
-* Please send me your comments to this work.
+* 本项目基于 Notepad2 4.2.25（Florian Balmer，BSD 风格许可证）修改而来，
+* 增加了 Markdown 实时预览、编码猜测/重开等功能。原始版权声明保留于下方，
+* 以符合上游许可证要求。
 *
 * See License.txt for details about distribution and modification.
 *
-*                                              (c) Florian Balmer 1996-2011
-*                                                  florian.balmer@gmail.com
-*                                               http://www.flos-freeware.ch
+*                                    Notepad2 (c) Florian Balmer 1996-2011
+*                                        florian.balmer@gmail.com
+*                                     http://www.flos-freeware.ch
 *
 *
 ******************************************************************************/
@@ -21,16 +22,26 @@
 
 #define VERSION_FILEVERSION_NUM      4,2,25,0
 #define VERSION_FILEVERSION_SHORT    L"4.2.25"
-#define VERSION_FILEVERSION_LONG     L"Notepad2 4.2.25"
-#define VERSION_LEGALCOPYRIGHT_SHORT L"Copyright (c) 2004-2011"
+#define VERSION_FILEVERSION_LONG     L"notepad2md 1.0"
+#define VERSION_LEGALCOPYRIGHT_SHORT L"Copyright (c) 2004-2011 Florian Balmer"
 #define VERSION_LEGALCOPYRIGHT_LONG  L"(c) Florian Balmer 2004-2011"
 #ifdef _M_AMD64
-#define VERSION_FILEDESCRIPTION      L"Notepad2 x64"
+#define VERSION_FILEDESCRIPTION      L"notepad2md x64"
 #else
-#define VERSION_FILEDESCRIPTION      L"Notepad2"
+#define VERSION_FILEDESCRIPTION      L"notepad2md"
 #endif
-#define VERSION_INTERNALNAME         L"Notepad2"
-#define VERSION_ORIGINALFILENAME     L"Notepad2.exe"
+#define VERSION_INTERNALNAME         L"notepad2md"
+#define VERSION_ORIGINALFILENAME     L"notepad2md.exe"
 #define VERSION_AUTHORNAME           L"Florian Balmer"
 #define VERSION_WEBPAGEDISPLAY       L"flo's freeware - http://www.flos-freeware.ch"
 #define VERSION_EMAILDISPLAY         L"florian.balmer@gmail.com"
+
+/* ---- 派生项目（notepad2md）信息 ---------------------------------------- */
+
+/* 「基于…修改」一行，显示在 About 对话框版本号下方 */
+#define VERSION_MODIFIED_FROM        L"基于 Notepad2 4.2.25 (Florian Balmer) 修改"
+#define VERSION_MODIFIED_FROM_EN     L"Based on Notepad2 4.2.25 (Florian Balmer)"
+
+/* 派生项目维护者与主页（两者保持一致，均指向 GitHub 账号） */
+#define VERSION_MAINTAINER           L"JackZ695"
+#define VERSION_MAINTAINER_WEB       L"https://github.com/JackZ695"

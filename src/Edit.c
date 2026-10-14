@@ -343,6 +343,8 @@ BOOL EditConvertText(HWND hwnd,UINT cpSource,UINT cpDest,BOOL bSetSavePoint)
   }
 
   else {
+    BOOL bDefaultCharUsed = FALSE;
+
     pchText = GlobalAlloc(GPTR,length*5+2);
 
     tr.lpstrText = pchText;
@@ -350,7 +352,25 @@ BOOL EditConvertText(HWND hwnd,UINT cpSource,UINT cpDest,BOOL bSetSavePoint)
 
     pwchText = GlobalAlloc(GPTR,length*3+2);
     cbwText  = MultiByteToWideChar(cpSource,0,pchText,length,pwchText,length*3+2);
-    cbText   = WideCharToMultiByte(cpDest,0,pwchText,cbwText,pchText,length*5+2,NULL,NULL);
+
+    // Warn before silently replacing characters the target encoding cannot
+    // represent (e.g. emoji when switching to a legacy 8-bit code page).
+    cbText = WideCharToMultiByte(cpDest,WC_NO_BEST_FIT_CHARS,pwchText,cbwText,
+               pchText,length*5+2,NULL,&bDefaultCharUsed);
+    if (cbText == 0) {
+      // probe not supported for this code page (UTF-8, UTF-7, GB18030, ...)
+      bDefaultCharUsed = FALSE;
+      cbText = WideCharToMultiByte(cpDest,0,pwchText,cbwText,pchText,length*5+2,NULL,NULL);
+    }
+    else if (bDefaultCharUsed) {
+      if (InfoBox(MBOKCANCEL,L"MsgConv3",IDS_ERR_UNICODE2) != IDOK) {
+        GlobalFree(pchText);
+        GlobalFree(pwchText);
+        return(FALSE);
+      }
+      // user accepted the loss: redo allowing best-fit mappings
+      cbText = WideCharToMultiByte(cpDest,0,pwchText,cbwText,pchText,length*5+2,NULL,NULL);
+    }
 
     SendMessage(hwnd,SCI_CANCEL,0,0);
     SendMessage(hwnd,SCI_SETUNDOCOLLECTION,0,0);
@@ -743,7 +763,7 @@ int CmpEncoding(const void *s1, const void *s2) {
   return StrCmp(((PENCODINGENTRY)s1)->wch,((PENCODINGENTRY)s2)->wch);
 }
 
-void Encoding_AddToListView(HWND hwnd,int idSel,BOOL bRecodeOnly)
+void Encoding_AddToListView(HWND hwnd,int idSel,int idGuessed,BOOL bRecodeOnly)
 {
   int i;
   int iSelItem = -1;
@@ -783,6 +803,12 @@ void Encoding_AddToListView(HWND hwnd,int idSel,BOOL bRecodeOnly)
         StrCatN(wchBuf,wchANSI,COUNTOF(wchBuf));
       else if (id == CPI_OEM)
         StrCatN(wchBuf,wchOEM,COUNTOF(wchBuf));
+
+      if (id == idGuessed) {
+        WCHAR wchGuess[64];
+        GetString(IDS_ENCODING_GUESSED,wchGuess,COUNTOF(wchGuess));
+        StrCatN(wchBuf,wchGuess,COUNTOF(wchBuf));
+      }
 
       if ((mEncoding[id].uFlags & NCP_INTERNAL) ||
           (IsValidCodePage(mEncoding[id].uCodePage) &&
@@ -917,10 +943,12 @@ BOOL Encoding_GetFromComboboxEx(HWND hwnd,int *pidEncoding)
 }
 
 
+static BOOL IsMultiByteUTF8Text(const char* pBuffer,int cb);
+
+
 BOOL IsUnicode(const char* pBuffer,int cb,LPBOOL lpbBOM,LPBOOL lpbReverse)
 {
   int i = 0xFFFF;
-
   BOOL bIsTextUnicode;
 
   BOOL bHasBOM;
@@ -945,7 +973,8 @@ BOOL IsUnicode(const char* pBuffer,int cb,LPBOOL lpbBOM,LPBOOL lpbReverse)
        !((i & IS_TEXT_UNICODE_UNICODE_MASK) && (i & IS_TEXT_UNICODE_REVERSE_MASK)) &&
         !(i & IS_TEXT_UNICODE_ODD_LENGTH) &&
         !(i & IS_TEXT_UNICODE_ILLEGAL_CHARS && !(i & IS_TEXT_UNICODE_REVERSE_SIGNATURE)) &&
-        !((i & IS_TEXT_UNICODE_REVERSE_MASK) == IS_TEXT_UNICODE_REVERSE_STATISTICS))) {
+        !((i & IS_TEXT_UNICODE_REVERSE_MASK) == IS_TEXT_UNICODE_REVERSE_STATISTICS) &&
+        !IsMultiByteUTF8Text(pBuffer,cb))) {
 
     if (lpbBOM)
       *lpbBOM = (bHasBOM || bHasRBOM ||
@@ -961,6 +990,28 @@ BOOL IsUnicode(const char* pBuffer,int cb,LPBOOL lpbBOM,LPBOOL lpbReverse)
   else
 
     return FALSE;
+}
+
+
+// A NUL-free buffer that is valid UTF-8 and contains at least one non-ASCII
+// (>= 0x80) byte is UTF-8 text, never BOM-less UTF-16. This vetoes the weak
+// statistical Unicode heuristic, which can misfire on multibyte UTF-8.
+static BOOL IsMultiByteUTF8Text(const char* pBuffer,int cb)
+{
+  int i;
+  BOOL bMultiByte = FALSE;
+
+  if (!IsUTF8(pBuffer,cb))
+    return FALSE;
+
+  for (i = 0; i < cb; i++) {
+    if (pBuffer[i] == '\0')
+      return FALSE;
+    if ((unsigned char)pBuffer[i] >= 0x80)
+      bMultiByte = TRUE;
+  }
+
+  return bMultiByte;
 }
 
 
@@ -1037,6 +1088,205 @@ BOOL IsUTF7(const char* pTest,int nLength)
   }
 
   return TRUE;
+}
+
+
+//
+//  DetectEncodingFromFile()
+//
+//  Guesses a file's encoding by reading a bounded prefix of it (at most
+//  DETECT_ENCODING_MAX_BYTES, like VS Code's auto-guess limit), using
+//  deterministic checks first and statistical/round-trip candidates last:
+//
+//    1. BOM               -> UTF-8 / UTF-16LE / UTF-16BE
+//    2. NUL bytes         -> UTF-16LE / UTF-16BE / binary (system default)
+//    3. valid UTF-8       -> UTF-8
+//    4. candidate 8-bit   -> strict decode + byte round-trip
+//    5. fallback          -> system default code page
+//
+//  Returns an index into mEncoding[], or -1 if the file cannot be read.
+//
+#define DETECT_ENCODING_MAX_BYTES (64 * 1024)
+
+// Strictly decode and re-encode; only accept when the bytes survive unchanged.
+// cbMaxTrim lets a prefix that was cut mid-character still match.
+static BOOL Encoding_TryCodePageRoundTrip(UINT uCodePage,const char* pData,
+                                          int cbData,int cbMaxTrim)
+{
+  DWORD  dwFlags = 0;
+  int    trim;
+
+  // MB_ERR_INVALID_CHARS is only supported for the DBCS/UTF code pages
+  switch (uCodePage) {
+    case 932: case 936: case 949: case 950: case 1361: case 54936: case 65001:
+    case 50220: case 50221: case 50222: case 50225:
+    case 50227: case 50229: case 51932: case 51936: case 51949:
+      dwFlags = MB_ERR_INVALID_CHARS;
+      break;
+    default:
+      dwFlags = 0;
+      break;
+  }
+
+  for (trim = 0; trim <= cbMaxTrim; trim++) {
+    int    n = cbData - trim;
+    int    cchWide, cbBack;
+    LPWSTR lpWide;
+    char*  pBack;
+
+    if (n < 1)
+      break;
+
+    cchWide = MultiByteToWideChar(uCodePage,dwFlags,pData,n,NULL,0);
+    if (cchWide <= 0)
+      continue;
+
+    lpWide = LocalAlloc(LPTR,(cchWide + 1) * sizeof(WCHAR));
+    if (!lpWide)
+      return FALSE;
+
+    if (MultiByteToWideChar(uCodePage,dwFlags,pData,n,lpWide,cchWide) == cchWide) {
+      cbBack = WideCharToMultiByte(uCodePage,0,lpWide,cchWide,NULL,0,NULL,NULL);
+      if (cbBack == n) {
+        pBack = LocalAlloc(LPTR,cbBack + 1);
+        if (pBack) {
+          if (WideCharToMultiByte(uCodePage,0,lpWide,cchWide,pBack,cbBack,NULL,NULL) == cbBack &&
+              memcmp(pBack,pData,n) == 0) {
+            LocalFree(pBack);
+            LocalFree(lpWide);
+            return TRUE;
+          }
+          LocalFree(pBack);
+        }
+      }
+    }
+
+    LocalFree(lpWide);
+  }
+
+  return FALSE;
+}
+
+
+int DetectEncodingFromFile(LPCWSTR lpszFile)
+{
+  HANDLE hFile;
+  char*  pData;
+  DWORD  cbData;
+  int    iEncoding = -1;
+  int    cbMaxTrim = 0;   // > 0 only when the prefix may end mid-character
+  UINT   uCandidates[6];
+
+  // candidate 8-bit encodings, tried in order (CJK users first)
+  uCandidates[0] = GetACP();  // usually 936 (GBK) on Simplified Chinese systems
+  uCandidates[1] = 936;       // GBK
+  uCandidates[2] = 950;       // Big5
+  uCandidates[3] = 932;       // Shift-JIS
+  uCandidates[4] = 949;       // EUC-KR
+  uCandidates[5] = 1252;      // windows-1252
+
+  hFile = CreateFile(lpszFile,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,
+            NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+  if (hFile == INVALID_HANDLE_VALUE)
+    return -1;
+
+  pData = LocalAlloc(LPTR,DETECT_ENCODING_MAX_BYTES);
+  if (!pData) {
+    CloseHandle(hFile);
+    return -1;
+  }
+
+  if (!ReadFile(hFile,pData,DETECT_ENCODING_MAX_BYTES,&cbData,NULL))
+    cbData = 0;
+
+  CloseHandle(hFile);
+
+  // a full read means the file may be larger and cut mid-character
+  if (cbData == DETECT_ENCODING_MAX_BYTES)
+    cbMaxTrim = 3;
+
+  if (cbData >= 2) {
+
+    // 1. BOM
+    if (pData[0] == (char)0xFF && pData[1] == (char)0xFE)
+      iEncoding = CPI_UNICODEBOM;      // UTF-16LE with BOM
+    else if (pData[0] == (char)0xFE && pData[1] == (char)0xFF)
+      iEncoding = CPI_UNICODEBEBOM;    // UTF-16BE with BOM
+    else if (cbData >= 3 && pData[0] == (char)0xEF && pData[1] == (char)0xBB && pData[2] == (char)0xBF)
+      iEncoding = CPI_UTF8SIGN;        // UTF-8 with BOM
+
+    if (iEncoding == -1) {
+
+      // 2. NUL bytes: UTF-16 (ASCII-interleaved) vs binary
+      DWORD i;
+      DWORD nLE = 0;
+      DWORD nBE = 0;
+      DWORD nNUL = 0;
+      DWORD nSample = (cbData < 512) ? cbData : 512;
+
+      for (i = 0; i < nSample; i++) {
+        if (pData[i] == '\0') {
+          nNUL++;
+          if (i & 1) nLE++;  // even byte non-zero, odd byte zero -> LE
+          else       nBE++;  // even byte zero, odd byte non-zero -> BE
+        }
+      }
+
+      if (nNUL > 0) {
+        if (nLE * 2 >= nNUL && nLE >= nBE)
+          iEncoding = CPI_UNICODE;     // UTF-16LE, no BOM
+        else if (nBE * 2 >= nNUL && nBE > nLE)
+          iEncoding = CPI_UNICODEBE;   // UTF-16BE, no BOM
+        else
+          iEncoding = CPI_DEFAULT;     // looks binary: system default
+      }
+
+      // 3. valid UTF-8
+      else {
+        int trim;
+        for (trim = 0; trim <= cbMaxTrim; trim++) {
+          int n = (int)cbData - trim;
+          if (n >= 1 && IsUTF8(pData,n)) {
+            iEncoding = CPI_UTF8;
+            break;
+          }
+        }
+      }
+
+      if (iEncoding == -1) {
+
+        // 4. candidate 8-bit encodings, strict decode + byte round-trip
+        int c;
+        for (c = 0; c < COUNTOF(uCandidates); c++) {
+          int iEnc;
+          // skip the built-in special slots (ANSI/OEM/Unicode/UTF-7), which
+          // are not concrete codepage choices for an 8-bit guess
+          for (iEnc = CPI_UTF7 + 1; iEnc < COUNTOF(mEncoding); iEnc++) {
+            if (mEncoding[iEnc].uCodePage == uCandidates[c] &&
+                !(mEncoding[iEnc].uFlags & NCP_INTERNAL))
+              break;
+          }
+          if (iEnc >= COUNTOF(mEncoding))
+            continue;
+
+          if (Encoding_TryCodePageRoundTrip(uCandidates[c],pData,(int)cbData,cbMaxTrim)) {
+            iEncoding = iEnc;
+            break;
+          }
+        }
+
+        // 5. fallback
+        if (iEncoding == -1)
+          iEncoding = CPI_DEFAULT;
+      }
+    }
+  }
+  else if (cbData > 0)
+    iEncoding = CPI_DEFAULT;
+
+  LocalFree(pData);
+
+  return iEncoding;
 }
 
 

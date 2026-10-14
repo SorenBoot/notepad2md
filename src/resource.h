@@ -70,12 +70,15 @@
 #define IDC_PREVIEW                     106
 #define IDC_EMAIL2                      106
 #define IDD_FAVORITES                   107
+#define IDC_MODIFIEDFROM                107
 #define IDC_NOWRAP                      107
 #define IDC_STYLEDEFAULT                107
 #define IDD_ADDTOFAV                    108
+#define IDC_MYWEBPAGE                   108
 #define IDC_PREVSTYLE                   108
 #define IDC_FINDCLOSE                   108
 #define IDD_FILEMRU                     109
+#define IDC_MYWEBPAGE2                  109
 #define IDC_FINDPREV                    109
 #define IDC_NEXTSTYLE                   109
 #define IDD_CHANGENOTIFY                110
@@ -394,6 +397,12 @@
 #define IDS_SETTINGSNOTSAVED            50039
 #define IDS_EXPORT_FAIL                 50040
 #define IDS_PREVIEW_ERROR               50041
+#define IDS_ENCODING_GUESSED            50042
+#define IDS_ENCODING_NOBOM              50043
+#define IDS_PREVIEW_COPY                50044
+#define IDS_PREVIEW_COPIED              50045
+#define IDS_ABOUT_MODIFIEDFROM          50046
+#define IDS_ABOUT_MAINTAINER            50047
 #define IDS_CMDLINEHELP                 60000
 
 // Next default values for new objects

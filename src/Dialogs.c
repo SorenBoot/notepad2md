@@ -216,7 +216,17 @@ INT_PTR CALLBACK AboutDlgProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
 
         SetDlgItemText(hwnd,IDC_VERSION,VERSION_FILEVERSION_LONG);
         SetDlgItemText(hwnd,IDC_COPYRIGHT,VERSION_LEGALCOPYRIGHT_SHORT);
-        SetDlgItemText(hwnd,IDC_AUTHORNAME,VERSION_AUTHORNAME);
+
+        /* 「基于 Notepad2 … 修改」与「修改/维护」两行的提示文字来自资源，
+           因此可随界面语言切换；姓名与链接是固定的。 */
+        {
+          WCHAR tchFrom[128], tchMaint[64];
+          GetString(IDS_ABOUT_MODIFIEDFROM,tchFrom,COUNTOF(tchFrom));
+          GetString(IDS_ABOUT_MAINTAINER,tchMaint,COUNTOF(tchMaint));
+          SetDlgItemText(hwnd,IDC_MODIFIEDFROM,tchFrom);
+          wsprintf(wch,L"%s  %s",tchMaint,VERSION_MAINTAINER);
+          SetDlgItemText(hwnd,IDC_AUTHORNAME,wch);
+        }
 
         if (hFontTitle)
           DeleteObject(hFontTitle);
@@ -237,13 +247,14 @@ INT_PTR CALLBACK AboutDlgProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
           SetDlgItemText(hwnd,IDC_WEBPAGE,wch);
         }
 
-        if (GetDlgItem(hwnd,IDC_EMAIL) == NULL) {
-          SetDlgItemText(hwnd,IDC_EMAIL2,VERSION_EMAILDISPLAY);
-          ShowWindow(GetDlgItem(hwnd,IDC_EMAIL2),SW_SHOWNORMAL);
+        /* 派生项目主页（SysLink），点击后由 WM_NOTIFY 外开 */
+        if (GetDlgItem(hwnd,IDC_MYWEBPAGE) == NULL) {
+          SetDlgItemText(hwnd,IDC_MYWEBPAGE2,VERSION_MAINTAINER_WEB);
+          ShowWindow(GetDlgItem(hwnd,IDC_MYWEBPAGE2),SW_SHOWNORMAL);
         }
         else {
-          wsprintf(wch,L"<A>%s</A>",VERSION_EMAILDISPLAY);
-          SetDlgItemText(hwnd,IDC_EMAIL,wch);
+          wsprintf(wch,L"<A>%s</A>",VERSION_MAINTAINER_WEB);
+          SetDlgItemText(hwnd,IDC_MYWEBPAGE,wch);
         }
 
         CenterDlgInParent(hwnd);
@@ -261,8 +272,8 @@ INT_PTR CALLBACK AboutDlgProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
               if (pnmhdr->idFrom == IDC_WEBPAGE) {
                 ShellExecute(hwnd,L"open",L"http://www.flos-freeware.ch",NULL,NULL,SW_SHOWNORMAL);
               }
-              else if (pnmhdr->idFrom == IDC_EMAIL) {
-                ShellExecute(hwnd,L"open",L"mailto:florian.balmer@gmail.com",NULL,NULL,SW_SHOWNORMAL);
+              else if (pnmhdr->idFrom == IDC_MYWEBPAGE) {
+                ShellExecute(hwnd,L"open",VERSION_MAINTAINER_WEB,NULL,NULL,SW_SHOWNORMAL);
               }
             }
             break;
@@ -1852,6 +1863,7 @@ typedef struct encodedlg {
   int  idEncoding;
   int  cxDlg;
   int  cyDlg;
+  int  idGuessed;   // encoding index guessed from file contents, -1 if none
 } ENCODEDLG, *PENCODEDLG;
 
 INT_PTR CALLBACK SelectDefEncodingDlgProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
@@ -1981,7 +1993,7 @@ INT_PTR CALLBACK SelectEncodingDlgProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM 
         ListView_SetExtendedListViewStyle(hwndLV,/*LVS_EX_FULLROWSELECT|*/LVS_EX_DOUBLEBUFFER|LVS_EX_LABELTIP);
         ListView_InsertColumn(hwndLV,0,&lvc);
 
-        Encoding_AddToListView(hwndLV,pdd->idEncoding,pdd->bRecodeOnly);
+        Encoding_AddToListView(hwndLV,pdd->idEncoding,pdd->idGuessed,pdd->bRecodeOnly);
 
         ListView_SetColumnWidth(hwndLV,0,LVSCW_AUTOSIZE_USEHEADER);
 
@@ -2085,6 +2097,7 @@ BOOL SelectEncodingDlg(HWND hwnd,int *pidREncoding)
   dd.idEncoding = *pidREncoding;
   dd.cxDlg = cxEncodingDlg;
   dd.cyDlg = cyEncodingDlg;
+  dd.idGuessed = -1;
 
   iResult = ThemedDialogBoxParam(
               g_hInstance,
@@ -2113,7 +2126,7 @@ BOOL SelectEncodingDlg(HWND hwnd,int *pidREncoding)
 extern int cxRecodeDlg;
 extern int cyRecodeDlg;
 
-BOOL RecodeDlg(HWND hwnd,int *pidREncoding)
+BOOL RecodeDlg(HWND hwnd,LPCWSTR lpszFile,int *pidREncoding)
 {
 
   INT_PTR iResult;
@@ -2123,6 +2136,12 @@ BOOL RecodeDlg(HWND hwnd,int *pidREncoding)
   dd.idEncoding = *pidREncoding;
   dd.cxDlg = cxRecodeDlg;
   dd.cyDlg = cyRecodeDlg;
+
+  // Guess the source encoding from the file contents and preselect it in the
+  // list (marked with "(guessed)"), so the user can just press OK to accept.
+  dd.idGuessed = (lpszFile && lstrlen(lpszFile)) ? DetectEncodingFromFile(lpszFile) : -1;
+  if (dd.idGuessed != -1)
+    dd.idEncoding = dd.idGuessed;
 
   iResult = ThemedDialogBoxParam(
               g_hInstance,

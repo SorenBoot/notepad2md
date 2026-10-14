@@ -166,7 +166,7 @@ void Encoding_GetLabel(int);
 int  Encoding_MatchW(LPCWSTR);
 int  Encoding_MatchA(char*);
 BOOL Encoding_IsValid(int);
-void Encoding_AddToListView(HWND,int,BOOL);
+void Encoding_AddToListView(HWND,int,int,BOOL);
 BOOL Encoding_GetFromListView(HWND,int *);
 void Encoding_AddToComboboxEx(HWND,int,BOOL);
 BOOL Encoding_GetFromComboboxEx(HWND,int *);
@@ -174,6 +174,7 @@ BOOL Encoding_GetFromComboboxEx(HWND,int *);
 BOOL IsUnicode(const char*,int,LPBOOL,LPBOOL);
 BOOL IsUTF8(const char*,int);
 BOOL IsUTF7(const char*,int);
+int  DetectEncodingFromFile(LPCWSTR);
 
 
 //void SciInitThemes(HWND);

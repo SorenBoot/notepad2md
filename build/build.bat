@@ -1,6 +1,6 @@
 @echo off
 REM ==========================================================================
-REM  MDPreView 编译脚本 — MinGW-w64
+REM  notepad2md 编译脚本 — MinGW-w64
 REM  双击此文件即可编译，无需安装 make
 REM ==========================================================================
 setlocal enabledelayedexpansion
@@ -19,7 +19,7 @@ set PATH=%W64DEVKIT%\bin;%PATH%
 cd /d "%~dp0"
 
 echo ============================================================
-echo   MDPreView Build  ^(MinGW-w64 x64^)
+echo   notepad2md Build  ^(MinGW-w64 x64^)
 echo ============================================================
 echo.
 
@@ -87,13 +87,13 @@ echo [4/4] 编译资源并链接 ...
 windres %DEF% -I..\res -I..\src -o obj\Notepad2_res.o ..\src\Notepad2.rc || goto :err
 set OBJS=!OBJS! obj\Notepad2_res.o
 
-g++ %LDF% -o ..\bin\MDPreView.exe !OBJS! %LIB% || goto :err
+g++ %LDF% -o ..\bin\notepad2md.exe !OBJS! %LIB% || goto :err
 
 echo.
 echo ============================================================
 echo   编译成功 ^!^!
-echo   输出：..\bin\MDPreView.exe
-for %%I in (..\bin\MDPreView.exe) do echo   大小：%%~zI 字节
+echo   输出：..\bin\notepad2md.exe
+for %%I in (..\bin\notepad2md.exe) do echo   大小：%%~zI 字节
 echo ============================================================
 pause
 exit /b 0

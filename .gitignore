@@ -1,5 +1,5 @@
 # ============================================================================
-#  MDPreView — 构建产物与 IDE 生成物（永不入库）
+#  notepad2md — 构建产物与 IDE 生成物（永不入库）
 # ============================================================================
 
 # ---- 编译产物 ----
@@ -30,7 +30,7 @@ dist/
 *.user
 *.suo
 *.aps
-*. VC.db
+*.VC.db
 *.opendb
 *.sdf
 *.ipch
@@ -68,3 +68,29 @@ _build_*.txt
 *.tar
 *.tar.gz
 *.tgz
+
+# ---- 测试用的临时语料 / 大文件（不入库）----
+tests/_sweep/
+tests/_t_*.md
+tests/_t_*.txt
+tests/llms-full-cn.txt
+tests/*副本*.md
+tests/probe_*.c
+# 用户真实业务语料（内部接口规划文档），不入公开仓库
+tests/01-user-login.md
+tests/README.md
+
+# ---- 开发时留在根目录的一次性探针/截图（不入库）----
+/build/ref_ui.png
+/_*.c
+/_*.ps1
+/_*.py
+/_*.cs
+/_*.png
+/_*.bmp
+/_*.txt
+/_*.log
+/preview_debug.log
+/md_debug.log
+/bar_debug.log
+/preview_test.log

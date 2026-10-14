@@ -1,6 +1,6 @@
 /*===========================================================================
 
-  MDPreView — Markdown 渲染模块接口
+  notepad2md — Markdown 渲染模块接口
 
   ===========================================================================*/
 
@@ -33,6 +33,24 @@ char* Markdown_Render(const char *mdtext);
   返回值同样用 Markdown_FreeHtml() 释放。
 */
 char* Markdown_RenderFragment(const char *mdtext);
+
+/*
+  带本地化文案的版本。
+
+  copyLabelUtf8   —— 代码块复制按钮的初始文字（UTF-8，如 "复制"/"Copy"）
+  copiedLabelUtf8 —— 点击后短暂显示的文字（UTF-8，如 "已复制"/"Copied"）
+
+  传 NULL 时按英文 "Copy"/"Copied" 处理。旧的 Markdown_Render() /
+  Markdown_RenderFragment() 就是调用这两个函数、传入 NULL 的薄包装，
+  这样 Markdown 模块本身不依赖任何 Windows 资源。
+*/
+char* Markdown_RenderEx(const char *mdtext,
+                        const char *copyLabelUtf8,
+                        const char *copiedLabelUtf8);
+
+char* Markdown_RenderFragmentEx(const char *mdtext,
+                                const char *copyLabelUtf8,
+                                const char *copiedLabelUtf8);
 
 /* 释放 Markdown_Render() / Markdown_RenderFragment() 返回的字符串 */
 void Markdown_FreeHtml(char *html);

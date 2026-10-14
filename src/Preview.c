@@ -1,6 +1,6 @@
 /*===========================================================================
 
-  MDPreView — 预览控件模块
+  notepad2md — 预览控件模块
   用 MSHTML（系统 Trident 引擎）渲染 Markdown 生成的 HTML。
 
   为什么用 MSHTML 而不是 WebView2：
@@ -35,6 +35,8 @@
 #include <ocidl.h>
 #include <exdisp.h>
 #include <mshtml.h>
+#include <mshtmhst.h>
+#include <oleauto.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -54,7 +56,7 @@ static void dbg(const char *fmt, ...)
   vsnprintf(buf, sizeof(buf), fmt, ap);
   va_end(ap);
   OutputDebugStringA(buf);
-  fp = fopen("C:\\Project\\MDPreView\\preview_debug.log", "a");
+  fp = fopen("preview_debug.log", "a");
   if (fp) { fprintf(fp, "%s\n", buf); fclose(fp); }
 }
 #define DBG(...) dbg(__VA_ARGS__)
@@ -66,7 +68,7 @@ static void dbg(const char *fmt, ...)
 
 /* ---- 常量 -------------------------------------------------------------- */
 
-#define PREVIEW_CLASS  TEXT("MDPreViewHost")
+#define PREVIEW_CLASS  TEXT("notepad2mdHost")
 
 
 /* ---- 接口定义（MinGW 头文件已提供，此处仅声明用到的）------------------- */
@@ -91,12 +93,349 @@ static const CLSID CLSID_WebBrowser_ = {
 };
 
 
+/* ---- 剪贴板 -------------------------------------------------------------
+
+  脚本里调 window.external.MDCopy(text)，最终落到这里。
+  纯 JS 的 window.clipboardData / execCommand('Copy') 在本控件内实测
+  均静默失败，必须借助宿主桥（IDocHostUIHandler::GetExternal）。
+  参数由 IE 封送为 BSTR，多行文本与缩进都能完整保留。 */
+
+static HWND g_hwndHostForClip = NULL;
+
+static void CopyToClipboard(HWND hwnd, const WCHAR *text)
+{
+  size_t cch;
+  HGLOBAL hMem;
+  void *pDest;
+
+  if (!text)
+    return;
+
+  if (!OpenClipboard(hwnd))
+    return;
+
+  EmptyClipboard();
+
+  cch = wcslen(text);
+  /* 末尾的换行（代码块常以 \n 结尾）去掉，贴回去更干净 */
+  while (cch > 0 && (text[cch-1] == L'\n' || text[cch-1] == L'\r'))
+    cch--;
+
+  hMem = GlobalAlloc(GMEM_MOVEABLE, (cch + 1) * sizeof(WCHAR));
+  if (hMem) {
+    pDest = GlobalLock(hMem);
+    if (pDest) {
+      memcpy(pDest, text, cch * sizeof(WCHAR));
+      ((WCHAR*)pDest)[cch] = L'\0';
+      GlobalUnlock(hMem);
+      /* 成功后所有权归剪贴板，不能再 GlobalFree */
+      if (!SetClipboardData(CF_UNICODETEXT, hMem))
+        GlobalFree(hMem);
+    } else {
+      GlobalFree(hMem);
+    }
+  }
+
+  CloseClipboard();
+}
+
+
+/* ---- 宿主脚本桥：window.external ----------------------------------------
+
+  实现一个最小 IDispatch，只认一个方法名 MDCopy。
+  IE 以 DISPATCH_METHOD 调 Invoke，rgvarg[0] 就是按钮传进来的字符串（vt=8 BSTR）。
+  对象独立计数：IE 会多次索取 GetExternal 并各自 AddRef，不能与 HostSite 共用计数。
+*/
+
+#define MD_DISPID_COPY 1
+#define MD_DISPID_OPEN 2
+
+typedef struct tagScriptBridge {
+  IDispatch  disp;      /* 必须第一个成员 */
+  LONG       refs;
+} ScriptBridge;
+
+static ScriptBridge *g_pBridge = NULL;
+
+
+static HRESULT STDMETHODCALLTYPE Bridge_QueryInterface(IDispatch *This,
+                                                       REFIID riid, void **ppv)
+{
+  if (!ppv) return E_POINTER;
+  *ppv = NULL;
+  if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IDispatch)) {
+    *ppv = This;
+    This->lpVtbl->AddRef(This);
+    return S_OK;
+  }
+  return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE Bridge_AddRef(IDispatch *This)
+{
+  ScriptBridge *b = (ScriptBridge*)This;
+  return (ULONG)InterlockedIncrement(&b->refs);
+}
+
+static ULONG STDMETHODCALLTYPE Bridge_Release(IDispatch *This)
+{
+  ScriptBridge *b = (ScriptBridge*)This;
+  LONG r = InterlockedDecrement(&b->refs);
+  if (r <= 0) {
+    free(b);
+    if (g_pBridge == b)
+      g_pBridge = NULL;
+  }
+  return (ULONG)r;
+}
+
+static HRESULT STDMETHODCALLTYPE Bridge_GetTypeInfoCount(IDispatch *This, UINT *pctinfo)
+{
+  (void)This;
+  if (!pctinfo) return E_POINTER;
+  *pctinfo = 0;
+  return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE Bridge_GetTypeInfo(IDispatch *This, UINT iTInfo,
+                                                    LCID lcid, ITypeInfo **ppTInfo)
+{
+  (void)This; (void)iTInfo; (void)lcid;
+  if (ppTInfo) *ppTInfo = NULL;
+  return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE Bridge_GetIDsOfNames(IDispatch *This, REFIID riid,
+                                                      LPOLESTR *rgszNames, UINT cNames,
+                                                      LCID lcid, DISPID *rgDispId)
+{
+  (void)This; (void)riid; (void)lcid;
+  if (!rgszNames || !rgDispId || cNames < 1) return E_INVALIDARG;
+  if (rgszNames[0] && lstrcmpiW(rgszNames[0], L"MDCopy") == 0) {
+    rgDispId[0] = MD_DISPID_COPY;
+    return S_OK;
+  }
+  if (rgszNames[0] && lstrcmpiW(rgszNames[0], L"MDOpen") == 0) {
+    rgDispId[0] = MD_DISPID_OPEN;
+    return S_OK;
+  }
+  rgDispId[0] = DISPID_UNKNOWN;
+  return DISP_E_UNKNOWNNAME;
+}
+
+static HRESULT STDMETHODCALLTYPE Bridge_Invoke(IDispatch *This, DISPID dispIdMember,
+                                               REFIID riid, LCID lcid, WORD wFlags,
+                                               DISPPARAMS *pDispParams, VARIANT *pVarResult,
+                                               EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+  (void)This; (void)riid; (void)lcid; (void)pVarResult; (void)pExcepInfo;
+
+  if (dispIdMember != MD_DISPID_COPY && dispIdMember != MD_DISPID_OPEN)
+    return DISP_E_MEMBERNOTFOUND;
+
+  if (!(wFlags & DISPATCH_METHOD))
+    return DISP_E_MEMBERNOTFOUND;
+
+  if (!pDispParams || pDispParams->cArgs < 1 || !pDispParams->rgvarg)
+    return E_INVALIDARG;
+
+  {
+    VARIANT *pv = &pDispParams->rgvarg[0];   /* 参数按逆序：第一个参数在 rgvarg[0] */
+    VARIANT vt;
+    HRESULT hr;
+
+    VariantInit(&vt);
+    hr = VariantChangeType(&vt, pv, 0, VT_BSTR);
+    if (SUCCEEDED(hr) && vt.vt == VT_BSTR) {
+      if (dispIdMember == MD_DISPID_COPY)
+        CopyToClipboard(g_hwndHostForClip, vt.bstrVal);
+      else
+        ShellExecuteW(g_hwndHostForClip, L"open", vt.bstrVal, NULL, NULL, SW_SHOWNORMAL);
+      VariantClear(&vt);
+      return S_OK;
+    }
+    VariantClear(&vt);
+    if (puArgErr) *puArgErr = 0;
+    return DISP_E_TYPEMISMATCH;
+  }
+}
+
+static IDispatchVtbl g_vtblBridge = {
+  Bridge_QueryInterface,
+  Bridge_AddRef,
+  Bridge_Release,
+  Bridge_GetTypeInfoCount,
+  Bridge_GetTypeInfo,
+  Bridge_GetIDsOfNames,
+  Bridge_Invoke
+};
+
+static IDispatch* Bridge_Get(void)
+{
+  if (!g_pBridge) {
+    g_pBridge = (ScriptBridge*)calloc(1, sizeof(ScriptBridge));
+    if (!g_pBridge)
+      return NULL;
+    g_pBridge->disp.lpVtbl = &g_vtblBridge;
+    g_pBridge->refs = 1;
+  }
+  g_pBridge->disp.lpVtbl->AddRef(&g_pBridge->disp);
+  return &g_pBridge->disp;
+}
+
+
+/* ---- IDocHostUIHandler -------------------------------------------------
+
+  只为了提供 GetExternal（把 window.external 指到脚本桥）。
+  其余方法必须给出「不接管」的返回值，否则 IE 会改变宿主化行为：
+    - GetHostInfo 返 E_NOTIMPL：保留 IE 默认外观/行为（不接菜单/工具栏）
+    - TranslateAccelerator 返 S_FALSE：不拦截键盘，按键照常给编辑器
+    - ShowUI/HideUI/… 返 S_OK 或 S_FALSE：表示「无额外 UI 要显示」
+*/
+
+static HRESULT STDMETHODCALLTYPE UI_QueryInterface(IDocHostUIHandler *This,
+                                                   REFIID riid, void **ppv);
+static ULONG   STDMETHODCALLTYPE UI_AddRef(IDocHostUIHandler *This);
+static ULONG   STDMETHODCALLTYPE UI_Release(IDocHostUIHandler *This);
+
+static HRESULT STDMETHODCALLTYPE UI_ShowContextMenu(IDocHostUIHandler *This, DWORD dwID,
+                                                    POINT *ppt, IUnknown *pcmdtReserved,
+                                                    IDispatch *pdispReserved)
+{
+  (void)This; (void)dwID; (void)ppt; (void)pcmdtReserved; (void)pdispReserved;
+  return S_FALSE;   /* 不接管：使用 IE 默认右键菜单 */
+}
+
+static HRESULT STDMETHODCALLTYPE UI_GetHostInfo(IDocHostUIHandler *This, DOCHOSTUIINFO *pInfo)
+{
+  (void)This; (void)pInfo;
+  return E_NOTIMPL;   /* 宿主不提供，IE 用默认值 */
+}
+
+static HRESULT STDMETHODCALLTYPE UI_ShowUI(IDocHostUIHandler *This, DWORD dwID,
+                                           IOleInPlaceActiveObject *pActiveObject,
+                                           IOleCommandTarget *pCommandTarget,
+                                           IOleInPlaceFrame *pFrame,
+                                           IOleInPlaceUIWindow *pDoc)
+{
+  (void)This; (void)dwID; (void)pActiveObject; (void)pCommandTarget; (void)pFrame; (void)pDoc;
+  return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_HideUI(IDocHostUIHandler *This)
+{
+  (void)This;
+  return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_UpdateUI(IDocHostUIHandler *This)
+{
+  (void)This;
+  return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_EnableModeless(IDocHostUIHandler *This, WINBOOL fEnable)
+{
+  (void)This; (void)fEnable;
+  return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_OnDocWindowActivate(IDocHostUIHandler *This, WINBOOL fActivate)
+{
+  (void)This; (void)fActivate;
+  return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_OnFrameWindowActivate(IDocHostUIHandler *This, WINBOOL fActivate)
+{
+  (void)This; (void)fActivate;
+  return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_ResizeBorder(IDocHostUIHandler *This, LPCRECT prcBorder,
+                                                 IOleInPlaceUIWindow *pUIWindow,
+                                                 WINBOOL fRameWindow)
+{
+  (void)This; (void)prcBorder; (void)pUIWindow; (void)fRameWindow;
+  return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_TranslateAccelerator(IDocHostUIHandler *This, LPMSG lpMsg,
+                                                         const GUID *pguidCmdGroup, DWORD nCmdID)
+{
+  (void)This; (void)lpMsg; (void)pguidCmdGroup; (void)nCmdID;
+  return S_FALSE;   /* 不拦截，交给主消息循环 */
+}
+
+static HRESULT STDMETHODCALLTYPE UI_GetOptionKeyPath(IDocHostUIHandler *This, LPOLESTR *pchKey,
+                                                     DWORD dw)
+{
+  (void)This; (void)pchKey; (void)dw;
+  return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_GetDropTarget(IDocHostUIHandler *This, IDropTarget *pDropTarget,
+                                                  IDropTarget **ppDropTarget)
+{
+  (void)This; (void)pDropTarget;
+  if (ppDropTarget) *ppDropTarget = NULL;
+  return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_GetExternal(IDocHostUIHandler *This, IDispatch **ppDispatch)
+{
+  (void)This;
+  if (!ppDispatch) return E_POINTER;
+  *ppDispatch = Bridge_Get();
+  DBG("UI_GetExternal -> %p", (void*)*ppDispatch);
+  return *ppDispatch ? S_OK : E_OUTOFMEMORY;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_TranslateUrl(IDocHostUIHandler *This, DWORD dwTranslate,
+                                                 LPWSTR pchURLIn, LPWSTR *ppchURLOut)
+{
+  (void)This; (void)dwTranslate; (void)pchURLIn;
+  if (ppchURLOut) *ppchURLOut = NULL;
+  return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE UI_FilterDataObject(IDocHostUIHandler *This, IDataObject *pDO,
+                                                     IDataObject **ppDORet)
+{
+  (void)This; (void)pDO;
+  if (ppDORet) *ppDORet = NULL;
+  return E_NOTIMPL;
+}
+
+static IDocHostUIHandlerVtbl g_vtblUI = {
+  UI_QueryInterface,
+  UI_AddRef,
+  UI_Release,
+  UI_ShowContextMenu,
+  UI_GetHostInfo,
+  UI_ShowUI,
+  UI_HideUI,
+  UI_UpdateUI,
+  UI_EnableModeless,
+  UI_OnDocWindowActivate,
+  UI_OnFrameWindowActivate,
+  UI_ResizeBorder,
+  UI_TranslateAccelerator,
+  UI_GetOptionKeyPath,
+  UI_GetDropTarget,
+  UI_GetExternal,
+  UI_TranslateUrl,
+  UI_FilterDataObject
+};
+
+
 /* ---- 宿主站点实现 ------------------------------------------------------ */
 
 typedef struct tagHostSite {
   IOleInPlaceSite      site;      /* 必须第一个成员：vtable 布局兼容 */
   IOleClientSite       client;    /* 独立 vtable，单独计数 */
   IOleInPlaceFrame     frame;    /* 同时充当 IOleInPlaceUIWindow（见下）*/
+  IDocHostUIHandler    uih;      /* 提供 window.external 等宿主化钩子 */
   LONG                 refs;
 
   HWND                 hwndHost;
@@ -149,6 +488,12 @@ static HRESULT STDMETHODCALLTYPE Site_QueryInterface(IOleInPlaceSite *This,
        若给它一个只有 8 项的 vtable，第 8 项 SetActiveObject 就会越界读到 NULL。 */
     *ppv = &s->frame;
     DBG("  -> matched IOleInPlaceUIWindow, returning frame");
+  }
+  /* 宿主化钩子：ieframe 每建一个新文档都会向 client site 重新要一次，
+     所以在这里应答即可，不必担心文档重建。 */
+  else if (IsEqualIID(riid, &IID_IDocHostUIHandler)) {
+    *ppv = &s->uih;
+    DBG("  -> matched IDocHostUIHandler");
   }
   else {
     DBG("  -> NO INTERFACE");
@@ -220,6 +565,28 @@ static ULONG STDMETHODCALLTYPE Frame_AddRef(IOleInPlaceFrame *This)
 static ULONG STDMETHODCALLTYPE Frame_Release(IOleInPlaceFrame *This)
 {
   HostSite *s = (HostSite*)((char*)This - offsetof(HostSite, frame));
+  return Site_Release(&s->site);
+}
+
+
+/* ---- IDocHostUIHandler 的 IUnknown（在 HostSite 定义之后才能用 offsetof）-- */
+
+static HRESULT STDMETHODCALLTYPE UI_QueryInterface(IDocHostUIHandler *This,
+                                                   REFIID riid, void **ppv)
+{
+  HostSite *s = (HostSite*)((char*)This - offsetof(HostSite, uih));
+  return Site_QueryInterface(&s->site, riid, ppv);
+}
+
+static ULONG STDMETHODCALLTYPE UI_AddRef(IDocHostUIHandler *This)
+{
+  HostSite *s = (HostSite*)((char*)This - offsetof(HostSite, uih));
+  return (ULONG)InterlockedIncrement(&s->refs);
+}
+
+static ULONG STDMETHODCALLTYPE UI_Release(IDocHostUIHandler *This)
+{
+  HostSite *s = (HostSite*)((char*)This - offsetof(HostSite, uih));
   return Site_Release(&s->site);
 }
 
@@ -527,10 +894,12 @@ static HostSite* Site_Create(HWND hwndHost)
   s->site.lpVtbl    = &g_vtblSite;
   s->client.lpVtbl  = &g_vtblClient;
   s->frame.lpVtbl   = &g_vtblFrame;
+  s->uih.lpVtbl     = &g_vtblUI;
   s->refs           = 1;
   s->hwndHost       = hwndHost;
   GetClientRect(hwndHost, &s->rc);
 
+  g_hwndHostForClip = hwndHost;
   g_pSite = s;
   return s;
 }
@@ -651,7 +1020,7 @@ HWND Preview_Create(HWND hwndParent, HINSTANCE hinst)
   DBG("Preview_Create: OleRun ok");
 
   /* 宿主名：控件内部可能用于文档标题等，补上以完全符合规范 */
-  pOle->lpVtbl->SetHostNames(pOle, L"MDPreView", L"Preview");
+  pOle->lpVtbl->SetHostNames(pOle, L"notepad2md", L"Preview");
 
   /* 3. 取渲染接口 */
   hr = pOle->lpVtbl->QueryInterface(pOle, &IID_IWebBrowser2, (void**)&site->pWB);
@@ -713,6 +1082,8 @@ HWND Preview_Create(HWND hwndParent, HINSTANCE hinst)
   实现：灌到 IHTMLDocument2 的 IPersistStreamInit 上。
   在浏览器对象上灌流（旧方案）在没有文档时必返 E_FAIL。
 */
+static BOOL InstallLinkDelegate(void);
+
 BOOL Preview_SetHtml(HWND hwnd, const char *html)
 {
   IWebBrowser2 *pWB;
@@ -787,7 +1158,66 @@ BOOL Preview_SetHtml(HWND hwnd, const char *html)
   pStream->lpVtbl->Release(pStream);
   pDoc->lpVtbl->Release(pDoc);
 
+  if (SUCCEEDED(hr))
+    InstallLinkDelegate();
+
   return SUCCEEDED(hr);
+}
+
+
+/*
+  安装文档级链接点击委托：命中 <a>（且非 # 锚点）时调 window.external.MDOpen，
+  拦截默认导航（否则预览控件会自己跳到外站，把预览页面“咝”掉）。
+
+  为什么用 execScript 注入而不是给 <a> 加 onclick 属性：
+  渲染测试对链接有严格断言（<a href="…">text</a>），加属性会弄坏它。
+  文档级 handler 不受 innerHTML 增量刷新影响（只换子节点，文档对象不变）。
+*/
+static BOOL InstallLinkDelegate(void)
+{
+  IWebBrowser2 *pWB;
+  IDispatch *pDisp = NULL;
+  IHTMLDocument2 *pDoc2 = NULL;
+  IHTMLWindow2 *pWin = NULL;
+  BSTR bstrCode = NULL, bstrLang = NULL;
+  VARIANT vRet;
+  BOOL ok = FALSE;
+
+  if (!g_pSite || !g_pSite->pWB)
+    return FALSE;
+
+  pWB = g_pSite->pWB;
+  if (FAILED(pWB->lpVtbl->get_Document(pWB, &pDisp)) || !pDisp)
+    return FALSE;
+  if (FAILED(pDisp->lpVtbl->QueryInterface(pDisp, &IID_IHTMLDocument2, (void**)&pDoc2)) || !pDoc2)
+    goto done;
+  if (FAILED(pDoc2->lpVtbl->get_parentWindow(pDoc2, &pWin)) || !pWin)
+    goto done;
+
+  /* 链接外开；不改动 <a> 自身属性 */
+  bstrCode = SysAllocString(
+    L"document.onclick=function(e){var t=e?e.target:event.srcElement;"
+    L"while(t&&t.tagName&&t.tagName.toLowerCase()!='a')t=t.parentNode;"
+    L"if(!t||!t.href)return;"
+    L"var h=t.getAttribute('href')||'';"
+    L"if(h.charAt(0)=='#')return;"
+    L"try{window.external.MDOpen(t.href);}catch(x){}"
+    L"return false;};");
+  bstrLang = SysAllocString(L"JavaScript");
+  if (bstrCode && bstrLang) {
+    VariantInit(&vRet);
+    ok = SUCCEEDED(pWin->lpVtbl->execScript(pWin, bstrCode, bstrLang, &vRet));
+    VariantClear(&vRet);
+    DBG("InstallLinkDelegate ok=%d", (int)ok);
+  }
+
+done:
+  if (bstrCode) SysFreeString(bstrCode);
+  if (bstrLang) SysFreeString(bstrLang);
+  if (pWin)  pWin->lpVtbl->Release(pWin);
+  if (pDoc2) pDoc2->lpVtbl->Release(pDoc2);
+  if (pDisp) pDisp->lpVtbl->Release(pDisp);
+  return ok;
 }
 
 
@@ -878,6 +1308,68 @@ done:
   if (pScrollEl) pScrollEl->lpVtbl->Release(pScrollEl);
   if (pEl)       pEl->lpVtbl->Release(pEl);
   if (pDoc3)     pDoc3->lpVtbl->Release(pDoc3);
+  return ok;
+}
+
+
+/*
+  把预览滚动到第 idxHeading 个标题（0 基）。编辑器/预览滚动同步用。
+
+  iTotalHeadings 为调用方扫描出的标题数；与 DOM 中实际标题数不符时直接放弃，
+  避免滚到错误位置。
+*/
+BOOL Preview_ScrollToHeading(HWND hwnd, int idxHeading, int iTotalHeadings)
+{
+  IWebBrowser2 *pWB;
+  IDispatch *pDisp = NULL;
+  IHTMLDocument2 *pDoc2 = NULL;
+  IHTMLWindow2 *pWin = NULL;
+  BSTR bstrCode = NULL;
+  BSTR bstrLang = NULL;
+  WCHAR wchCode[320];
+  VARIANT vRet;
+  BOOL ok = FALSE;
+
+  if (!hwnd || idxHeading < 0 || iTotalHeadings <= 0 || !g_pSite || !g_pSite->pWB)
+    return FALSE;
+
+  pWB = g_pSite->pWB;
+  if (FAILED(pWB->lpVtbl->get_Document(pWB, &pDisp)) || !pDisp)
+    return FALSE;
+
+  if (FAILED(pDisp->lpVtbl->QueryInterface(pDisp, &IID_IHTMLDocument2, (void**)&pDoc2)) || !pDoc2)
+    goto done;
+
+  if (FAILED(pDoc2->lpVtbl->get_parentWindow(pDoc2, &pWin)) || !pWin)
+    goto done;
+
+  /* 让目标标题落在视口顶端下方 8px 处，而不是紧贴顶边。
+     documentElement / body 两个都赋相同的绝对值：不同文档模式下生效的
+     那个不同，另一个会忽略这个赋值。 */
+  wsprintfW(wchCode,
+    L"(function(){var h=document.querySelectorAll('h1,h2,h3,h4,h5,h6');"
+    L"if(h.length!==%d||%d>=h.length)return;"
+    L"var t=h[%d].getBoundingClientRect().top;"
+    L"var d=document.documentElement,b=document.body;"
+    L"var y=(d.scrollTop||b.scrollTop)+t-8;"
+    L"if(y<0)y=0;"
+    L"d.scrollTop=y;if(b)b.scrollTop=y;})();",
+    iTotalHeadings, idxHeading, idxHeading);
+
+  bstrCode = SysAllocString(wchCode);
+  bstrLang = SysAllocString(L"JavaScript");
+  if (bstrCode && bstrLang) {
+    VariantInit(&vRet);
+    ok = SUCCEEDED(pWin->lpVtbl->execScript(pWin, bstrCode, bstrLang, &vRet));
+    VariantClear(&vRet);
+  }
+
+done:
+  if (bstrCode) SysFreeString(bstrCode);
+  if (bstrLang) SysFreeString(bstrLang);
+  if (pWin)  pWin->lpVtbl->Release(pWin);
+  if (pDoc2) pDoc2->lpVtbl->Release(pDoc2);
+  if (pDisp) pDisp->lpVtbl->Release(pDisp);
   return ok;
 }
 

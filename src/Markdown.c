@@ -1,6 +1,6 @@
 /*===========================================================================
 
-  MDPreView — Markdown 渲染模块
+  notepad2md — Markdown 渲染模块
   将 Markdown 文本转换为 HTML，供 MSHTML 预览控件显示。
 
   依赖：md4c（MIT, Martin Mitas）— https://github.com/mity/md4c
@@ -138,11 +138,56 @@ static void outbuf_append_url(OUTBUF *ob, const char *s, int len)
 }
 
 
+/* JS 单引号字符串转义：用于把文案嵌入内联 onclick 属性。
+   同时转义 < > & 和 "，以免破坏 HTML 属性。 */
+static void outbuf_append_js(OUTBUF *ob, const char *s)
+{
+  int i;
+
+  if (!s)
+    return;
+
+  for (i = 0; s[i]; i++) {
+    unsigned char c = (unsigned char)s[i];
+    switch (c) {
+      case '\\': outbuf_puts(ob, "\\\\");  break;
+      case '\'': outbuf_puts(ob, "\\'");   break;
+      case '"':  outbuf_puts(ob, "\\x22"); break;
+      case '<':  outbuf_puts(ob, "\\x3c"); break;
+      case '>':  outbuf_puts(ob, "\\x3e"); break;
+      case '&':  outbuf_puts(ob, "\\x26"); break;
+      default:
+        if (c < 0x20) {
+          char tmp[8];
+          sprintf(tmp, "\\x%02x", c);
+          outbuf_puts(ob, tmp);
+        } else {
+          outbuf_append(ob, s + i, 1);
+        }
+    }
+  }
+}
+
+
+/* ---- 渲染上下文 -------------------------------------------------------- */
+
+/*
+  传给 md4c 回调的上下文：输出缓冲 + 代码块复制按钮的本地化文案。
+  文案由调用方（Notepad2.c）从资源里取，Markdown 模块本身不加载资源。
+*/
+typedef struct tagMDCTX {
+  OUTBUF      body;
+  const char *copyLabel;    /* UTF-8，非 NULL */
+  const char *copiedLabel;  /* UTF-8，非 NULL */
+} MDCTX;
+
+
 /* ---- md4c 回调 ---------------------------------------------------------- */
 
 static int cb_enter_block(MD_BLOCKTYPE type, void *detail, void *userdata)
 {
-  OUTBUF *ob = (OUTBUF*)userdata;
+  MDCTX *ctx = (MDCTX*)userdata;
+  OUTBUF *ob = &ctx->body;
 
   switch (type) {
     case MD_BLOCK_DOC:   break;
@@ -174,7 +219,39 @@ static int cb_enter_block(MD_BLOCKTYPE type, void *detail, void *userdata)
     }
     case MD_BLOCK_CODE: {
       MD_BLOCK_CODE_DETAIL *d = (MD_BLOCK_CODE_DETAIL*)detail;
-      /* lang 可能非零终止，需限定长度 */
+
+      /* GitHub 风格外壳：
+           <div class="codeblock">
+             <div class="codeblock-head">
+               <span class="codeblock-lang">c</span>
+               <button … onclick="…MDCopy(this…code').textContent)">复制</button>
+             </div>
+             <pre><code class="language-c">…
+         语言标签只在有语言时输出；复制按钮始终有。
+         按钮用内联 onclick（不用 <script>）：一是 Preview_SetContent 走 innerHTML，
+         内联属性仍会生效；二是避免在渲染结果里出现 <script>（安全测试有断言）。
+         选择器 this.parentNode(=.codeblock-head).parentNode(=.codeblock)
+         .querySelector('code') 正好命中本块的 <code>。 */
+      outbuf_puts(ob, "<div class=\"codeblock\"><div class=\"codeblock-head\">");
+
+      if (d->lang.text && d->lang.size > 0) {
+        outbuf_puts(ob, "<span class=\"codeblock-lang\">");
+        outbuf_append_escaped(ob, d->lang.text, (int)d->lang.size);
+        outbuf_puts(ob, "</span>");
+      }
+
+      outbuf_puts(ob, "<button type=\"button\" class=\"codeblock-copy\" title=\"");
+      outbuf_append_escaped(ob, ctx->copyLabel, (int)strlen(ctx->copyLabel));
+      outbuf_puts(ob, "\" onclick=\"window.external.MDCopy(this.parentNode.parentNode"
+                      ".querySelector('code').textContent);"
+                      "var b=this;b.innerHTML='");
+      outbuf_append_js(ob, ctx->copiedLabel);
+      outbuf_puts(ob, "';setTimeout(function(){b.innerHTML='");
+      outbuf_append_js(ob, ctx->copyLabel);
+      outbuf_puts(ob, "';},1500);\">");
+      outbuf_append_escaped(ob, ctx->copyLabel, (int)strlen(ctx->copyLabel));
+      outbuf_puts(ob, "</button></div>");
+
       if (d->lang.text && d->lang.size > 0) {
         outbuf_puts(ob, "<pre><code class=\"language-");
         outbuf_append_escaped(ob, d->lang.text, (int)d->lang.size);
@@ -206,7 +283,8 @@ static int cb_enter_block(MD_BLOCKTYPE type, void *detail, void *userdata)
 
 static int cb_leave_block(MD_BLOCKTYPE type, void *detail, void *userdata)
 {
-  OUTBUF *ob = (OUTBUF*)userdata;
+  MDCTX *ctx = (MDCTX*)userdata;
+  OUTBUF *ob = &ctx->body;
 
   switch (type) {
     case MD_BLOCK_DOC:   break;
@@ -225,7 +303,7 @@ static int cb_leave_block(MD_BLOCKTYPE type, void *detail, void *userdata)
       outbuf_puts(ob, tag);
       break;
     }
-    case MD_BLOCK_CODE:   outbuf_puts(ob, "</code></pre>"); break;
+    case MD_BLOCK_CODE:   outbuf_puts(ob, "</code></pre></div>"); break;
     case MD_BLOCK_HTML:   break;
     case MD_BLOCK_P:      outbuf_puts(ob, "</p>"); break;
 
@@ -245,7 +323,8 @@ static int cb_leave_block(MD_BLOCKTYPE type, void *detail, void *userdata)
 
 static int cb_enter_span(MD_SPANTYPE type, void *detail, void *userdata)
 {
-  OUTBUF *ob = (OUTBUF*)userdata;
+  MDCTX *ctx = (MDCTX*)userdata;
+  OUTBUF *ob = &ctx->body;
 
   switch (type) {
     case MD_SPAN_EM:      outbuf_puts(ob, "<em>");     break;
@@ -293,7 +372,8 @@ static int cb_enter_span(MD_SPANTYPE type, void *detail, void *userdata)
 
 static int cb_leave_span(MD_SPANTYPE type, void *detail, void *userdata)
 {
-  OUTBUF *ob = (OUTBUF*)userdata;
+  MDCTX *ctx = (MDCTX*)userdata;
+  OUTBUF *ob = &ctx->body;
 
   switch (type) {
     case MD_SPAN_EM:      outbuf_puts(ob, "</em>");     break;
@@ -316,7 +396,8 @@ static int cb_leave_span(MD_SPANTYPE type, void *detail, void *userdata)
 
 static int cb_text(MD_TEXTTYPE type, const MD_CHAR *text, MD_SIZE size, void *userdata)
 {
-  OUTBUF *ob = (OUTBUF*)userdata;
+  MDCTX *ctx = (MDCTX*)userdata;
+  OUTBUF *ob = &ctx->body;
 
   switch (type) {
     case MD_TEXT_NORMAL:
@@ -359,7 +440,7 @@ static int cb_text(MD_TEXTTYPE type, const MD_CHAR *text, MD_SIZE size, void *us
 static void render_debug_log(const char *msg, const char *text, MD_SIZE size)
 {
 #ifdef MD_DEBUG
-  FILE *fp = fopen("C:\\Project\\MDPreView\\md_debug.log", "a");
+  FILE *fp = fopen("md_debug.log", "a");
   if (fp) {
     fprintf(fp, "%s [%u bytes]: %.*s\n", msg, (unsigned)size,
             (int)(size > 200 ? 200 : size), text);
@@ -374,9 +455,9 @@ static void render_debug_log(const char *msg, const char *text, MD_SIZE size)
 /* ---- 对外接口 ---------------------------------------------------------- */
 
 /*
-  内部：把 Markdown 解析成 body 片段，写入调用方提供的缓冲区。
+  内部：把 Markdown 解析成 body 片段，写入 ctx->body。
 */
-static BOOL render_body(const char *mdtext, OUTBUF *pbuf)
+static BOOL render_body(const char *mdtext, MDCTX *ctx)
 {
   MD_PARSER parser;
   MD_SIZE size;
@@ -400,9 +481,9 @@ static BOOL render_body(const char *mdtext, OUTBUF *pbuf)
   parser.debug_log            = NULL;
   parser.syntax               = NULL;
 
-  rc = md_parse(mdtext, size, &parser, pbuf);
+  rc = md_parse(mdtext, size, &parser, ctx);
 
-  if (rc != 0 || pbuf->failed) {
+  if (rc != 0 || ctx->body.failed) {
     render_debug_log("md_parse failed rc=", mdtext, size);
     return FALSE;
   }
@@ -417,26 +498,39 @@ static BOOL render_body(const char *mdtext, OUTBUF *pbuf)
   预览面板用它做增量刷新：只替换内容容器的 innerHTML，避免每次
   按键都整页重载导致的白屏闪烁。
 
+  copyLabelUtf8 / copiedLabelUtf8 为 NULL 时用英文默认值。
   返回 malloc 分配的字符串，调用方用 Markdown_FreeHtml 释放。
 */
-char* Markdown_RenderFragment(const char *mdtext)
+char* Markdown_RenderFragmentEx(const char *mdtext,
+                                const char *copyLabelUtf8,
+                                const char *copiedLabelUtf8)
 {
-  OUTBUF body;
+  MDCTX ctx;
 
   if (!mdtext)
     return NULL;
 
+  memset(&ctx, 0, sizeof(ctx));
+  ctx.copyLabel   = (copyLabelUtf8 && copyLabelUtf8[0])   ? copyLabelUtf8   : "Copy";
+  ctx.copiedLabel = (copiedLabelUtf8 && copiedLabelUtf8[0]) ? copiedLabelUtf8 : "Copied";
+
   /* 空文档也要给出合法结果，避免上游把 NULL 当错误处理 */
-  outbuf_init(&body);
-  if (body.failed)
+  outbuf_init(&ctx.body);
+  if (ctx.body.failed)
     return NULL;
 
-  if (!render_body(mdtext, &body)) {
-    outbuf_free(&body);
+  if (!render_body(mdtext, &ctx)) {
+    outbuf_free(&ctx.body);
     return NULL;
   }
 
-  return body.data;   /* 所有权转移给调用方 */
+  return ctx.body.data;   /* 所有权转移给调用方 */
+}
+
+
+char* Markdown_RenderFragment(const char *mdtext)
+{
+  return Markdown_RenderFragmentEx(mdtext, NULL, NULL);
 }
 
 
@@ -449,11 +543,13 @@ char* Markdown_RenderFragment(const char *mdtext)
 
   注意：md4c 要求输入为 UTF-8。若输入不是 UTF-8，需先由调用方转换。
 */
-char* Markdown_Render(const char *mdtext)
+char* Markdown_RenderEx(const char *mdtext,
+                       const char *copyLabelUtf8,
+                       const char *copiedLabelUtf8)
 {
   char *frag;
 
-  frag = Markdown_RenderFragment(mdtext);
+  frag = Markdown_RenderFragmentEx(mdtext, copyLabelUtf8, copiedLabelUtf8);
   if (!frag)
     return NULL;
 
@@ -520,6 +616,51 @@ char* Markdown_Render(const char *mdtext)
       "  font-size:13px;\n"
       "  line-height:1.45;\n"
       "}\n"
+      "/* 代码块外壳：语言标签 + 复制按钮 */\n"
+      ".codeblock{\n"
+      "  position:relative;\n"
+      "  margin:0 0 12px 0;\n"
+      "}\n"
+      ".codeblock pre{\n"
+      "  margin:0;\n"
+      "  padding-top:28px;\n"
+      "}\n"
+      ".codeblock-head{\n"
+      "  position:absolute;\n"
+      "  top:0;\n"
+      "  left:0;\n"
+      "  right:0;\n"
+      "  height:24px;\n"
+      "  line-height:24px;\n"
+      "  background:#eef1f4;\n"
+      "  border:1px solid #e0e0e0;\n"
+      "  border-bottom:none;\n"
+      "  border-radius:4px 4px 0 0;\n"
+      "  padding:0 6px;\n"
+      "  font-family:'Segoe UI',Tahoma,sans-serif;\n"
+      "  font-size:12px;\n"
+      "  color:#57606a;\n"
+      "}\n"
+      ".codeblock-lang{\n"
+      "  float:left;\n"
+      "  margin-left:4px;\n"
+      "}\n"
+      ".codeblock-copy{\n"
+      "  float:right;\n"
+      "  height:20px;\n"
+      "  margin-top:2px;\n"
+      "  padding:0 8px;\n"
+      "  font-family:'Segoe UI',Tahoma,sans-serif;\n"
+      "  font-size:12px;\n"
+      "  color:#24292f;\n"
+      "  background:#f6f8fa;\n"
+      "  border:1px solid #d0d7de;\n"
+      "  border-radius:3px;\n"
+      "  cursor:pointer;\n"
+      "}\n"
+      ".codeblock-copy:hover{\n"
+      "  background:#eef1f4;\n"
+      "}\n"
       "blockquote{\n"
       "  margin:0 0 12px 0;\n"
       "  padding:4px 14px;\n"
@@ -566,6 +707,12 @@ char* Markdown_Render(const char *mdtext)
     }
     return doc.data;   /* 所有权转移给调用方 */
   }
+}
+
+
+char* Markdown_Render(const char *mdtext)
+{
+  return Markdown_RenderEx(mdtext, NULL, NULL);
 }
 
 

@@ -21,7 +21,12 @@
 
 
 //==== Main Window ============================================================
-#define WC_NOTEPAD2 L"Notepad2"
+/* 窗口类名。改这里会影响与本程序其它实例的 FindWindow 互操作，
+   但本项目内部不使用 FindWindow 找自身，故随品牌一起改。 */
+#define WC_NOTEPAD2 L"notepad2md"
+
+/* 预览分隔条窗口类名 */
+#define WC_NOTEPAD2_SPLITTER L"notepad2mdSplitter"
 
 
 //==== Data Type for WM_COPYDATA ==============================================
@@ -126,7 +131,7 @@ void UpdateStatusbar();
 void UpdateToolbar();
 void UpdateLineNumberWidth();
 
-/* MDPreView 实时预览 */
+/* notepad2md 实时预览 */
 void PreviewUpdate(void);
 void PreviewToggle(BOOL bShow);
 

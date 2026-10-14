@@ -1,5 +1,5 @@
 # ============================================================================
-#  MDPreView — Markdown 编辑 + 实时预览（基于 Notepad2 4.2.25 + Scintilla 2.24）
+#  notepad2md — Markdown 编辑 + 实时预览（基于 Notepad2 4.2.25 + Scintilla 2.24）
 #  MinGW-w64 构建，产物：单 exe，静态链接，无运行时依赖
 #
 #  用法（在 build/ 目录下执行）：
@@ -43,7 +43,7 @@ LDLIBS      := -lcomctl32 -lshlwapi -limm32 -luuid -lole32 -loleaut32 \
                -lshell32 -ladvapi32
 
 OUTDIR      := ../bin
-TARGET      := $(OUTDIR)/MDPreView.exe
+TARGET      := $(OUTDIR)/notepad2md.exe
 
 # ---- 源文件 ---------------------------------------------------------------
 # Notepad2 本体

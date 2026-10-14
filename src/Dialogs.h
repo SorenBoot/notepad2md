@@ -42,7 +42,7 @@ BOOL LongLineSettingsDlg(HWND,UINT,int *);
 BOOL TabSettingsDlg(HWND,UINT,int *);
 BOOL SelectDefEncodingDlg(HWND,int *);
 BOOL SelectEncodingDlg(HWND,int *);
-BOOL RecodeDlg(HWND,int *);
+BOOL RecodeDlg(HWND,LPCWSTR,int *);
 BOOL SelectDefLineEndingDlg(HWND,int *);
 INT_PTR InfoBox(int,LPCWSTR,int,...);
 

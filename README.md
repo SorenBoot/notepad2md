@@ -1,4 +1,4 @@
-# MDPreView
+# notepad2md
 
 轻量级 Markdown 编辑 + 实时预览工具。单文件 exe，静态链接，**零运行时依赖**。
 
@@ -10,6 +10,9 @@
 - **零运行时依赖** —— 只依赖 Windows 系统 DLL（Win7 起全部自带）
 - **内存占用约 40 MB**（开启预览时；MSHTML 引擎约占 25 MB），空载约 15 MB
 - **实时 Markdown 预览** —— 左右分栏，边打边看，`Ctrl+Alt+M` 开关
+- **可拖动分隔条** —— 拖动调整编辑区/预览宽度，双击复位 50/50，比例自动记忆
+- **代码块复制按钮** —— 预览里的代码块带语言标签与「复制」按钮，一键复制源码
+- **预览内链接直接外开** —— 点击预览里的链接用系统浏览器打开，不再在窗格内导航
 - **简体中文界面** —— 菜单、对话框、状态栏、提示信息全部汉化
 - Scintilla 编辑引擎 —— 完整保留 Notepad2 的快捷键、语法高亮、查找替换
 - 窗口置顶（`Alt+T`）
@@ -30,11 +33,19 @@
 ## Markdown 预览
 
 - **工具栏最右侧的按钮**，或 **`Ctrl+Alt+M`**，或菜单 **查看(V) → Markdown 预览**
-- 左右各占一半，**打开 `.md` / `.markdown` / `.mdown` / `.mkd` 文件时自动开启**
+- 左右分栏，中间有可拖动分隔条：
+  - **拖动**调整两栏宽度；
+  - **双击**复位到 50/50；
+  - 比例按千分比存进 ini（`PreviewSplitPermille`），下次启动沿用
+- **打开 `.md` / `.markdown` / `.mdown` / `.mkd` 文件时自动开启**
 - 输入后约 120 ms 自动刷新（合并连续按键，不会每敲一个字都重排）
 - **增量刷新，不闪屏**：第一次加载完整文档，之后只改内容容器的 `innerHTML`，
   不重载页面，因此不会白闪，滚动位置也会保留
 - 支持 GitHub 风格语法：表格、任务列表、删除线、脚注、围栏代码块
+- **代码块带复制按钮**：围栏代码块渲染为「语言标签 + 复制按钮 + 代码」的卡片，
+  点「复制」把源码写入剪贴板，按钮短暂变为「已复制」；按钮文案随界面语言切换
+- **预览里的链接用系统浏览器打开**（不在预览窗格内跳转），由宿主侧的
+  `document.onclick` 委托实现，不修改 `<a>` 本身
 - **中文文件无需担心编码**：UTF-8 与 GBK 等本地代码页都会自动转成 UTF-8 渲染
 - 安全：HTML 标签被转义（`NOHTML`），预览不会执行脚本
 
@@ -58,7 +69,7 @@
 build\build.bat
 ```
 
-产物输出到 `bin\MDPreView.exe`。
+产物输出到 `bin\notepad2md.exe`。
 
 ### 方式二：make
 
@@ -92,7 +103,7 @@ make W64DEVKIT=/d/your/w64devkit
 ## 目录结构
 
 ```
-MDPreView/
+notepad2md/
 ├── build/              构建脚本（Makefile + build.bat）
 ├── src/                源码
 │   ├── Notepad2.c      主程序（原版未改动）
@@ -129,11 +140,11 @@ MDPreView/
 | `src/Dlapi.c` | COM 接口调用加 `(void**)` / `(const ITEMIDLIST**)` 强转 | MinGW 的 `shlobj.h` 参数类型更严格 |
 | `src/Print.cpp` | 补 `max`/`min` 宏 | MinGW 的 `minwindef.h` 不提供 |
 | 4 个文件 | ISO-8859 非 ASCII 字符 → ASCII | GCC 默认按 UTF-8 读源码，`0xA9` 等字节非法 |
-| `src/Notepad2.c` | 新增 `PreviewUpdate` / `PreviewToggle`，`MsgSize` 增加分栏，`SCN_MODIFIED` 防抖，菜单项与 ini 持久化 | MDPreView 功能接入 |
+| `src/Notepad2.c` | 新增 `PreviewUpdate` / `PreviewToggle`，`MsgSize` 增加分栏，`SCN_MODIFIED` 防抖，菜单项与 ini 持久化 | notepad2md 功能接入 |
 | `src/Notepad2.rc` / `resource.h` | 新增菜单项 `Markdown Preview`、加速键 `Ctrl+Alt+M`、错误字符串 | 同上 |
 | `src/Notepad2.rc` | 末尾新增 `LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED` 中文资源块 | 中文界面 |
 | `res/Notepad2.ico` | 换成含 128×128 的多尺寸图标 | 大图标不再模糊 |
-| `res/Toolbar.bmp` | 23 → 24 个图标，新增分栏预览图标 | MDPreView 功能 |
+| `res/Toolbar.bmp` | 23 → 24 个图标，新增分栏预览图标 | notepad2md 功能 |
 | `build/Makefile` | ① windres 规则补上 `res/` 依赖；② `REBARBANDINFO.cbSize` 用兼容值 | 见下 |
 
 ### 两个 MinGW 特有的坑（已修）

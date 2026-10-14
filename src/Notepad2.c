@@ -161,11 +161,17 @@ BOOL      bTransparentModeAvailable;
 BOOL      bShowToolbar;
 BOOL      bShowStatusbar;
 
-/* MDPreView：实时 Markdown 预览 */
+/* notepad2md：实时 Markdown 预览 */
 HWND      hwndPreview = NULL;      /* MSHTML 预览窗格（隐藏时不显示） */
 BOOL      bShowPreview = FALSE;    /* 预览是否可见 */
 BOOL      bPreviewInited = FALSE;  /* 预览模块是否初始化成功 */
 BOOL      bPreviewDocLoaded = FALSE; /* CSS 外壳文档是否已灌入控件 */
+HWND      hwndSplitBar = NULL;     /* 编辑区/预览之间的分隔条 */
+int       iPreviewSplitPermille = 500; /* 编辑区宽度占客户区的千分比 */
+BOOL      bSplitDragging = FALSE;  /* 分隔条是否处于拖动中 */
+
+/* 预览分隔条：在 MsgSize() 中布局，在各自定义处定义 */
+static LRESULT CALLBACK SplitBarWndProc(HWND,UINT,WPARAM,LPARAM);
 
 typedef struct _wi
 {
@@ -184,7 +190,6 @@ int     cyReBar;
 int     cyReBarFrame;
 int     cxEditFrame;
 int     cyEditFrame;
-int     cxPreviewSplit;
 
 int     cxEncodingDlg;
 int     cyEncodingDlg;
@@ -353,7 +358,7 @@ int WINAPI WinMain(HINSTANCE hInstance,HINSTANCE hPrevInst,LPSTR lpCmdLine,int n
         (LPWSTR)&lpMsgBuf,
         0,
         NULL);
-    MessageBox(NULL,(LPCWSTR)lpMsgBuf,L"Notepad2",MB_OK|MB_ICONEXCLAMATION);
+    MessageBox(NULL,(LPCWSTR)lpMsgBuf,L"notepad2md",MB_OK|MB_ICONEXCLAMATION);
     LocalFree(lpMsgBuf);
     return(0);
   }
@@ -473,7 +478,25 @@ BOOL InitApplication(HINSTANCE hInstance)
   wc.lpszMenuName  = MAKEINTRESOURCE(IDR_MAINWND);
   wc.lpszClassName = wchWndClass;
 
-  return RegisterClass(&wc);
+  if (!RegisterClass(&wc))
+    return FALSE;
+
+  /* notepad2md：预览分隔条窗口类 */
+  wc.style         = CS_DBLCLKS;
+  wc.lpfnWndProc   = (WNDPROC)SplitBarWndProc;
+  wc.cbClsExtra    = 0;
+  wc.cbWndExtra    = 0;
+  wc.hInstance     = hInstance;
+  wc.hIcon         = NULL;
+  wc.hCursor       = LoadCursor(NULL,IDC_SIZEWE);
+  wc.hbrBackground = (HBRUSH)(COLOR_3DFACE+1);
+  wc.lpszMenuName  = NULL;
+  wc.lpszClassName = WC_NOTEPAD2_SPLITTER;
+
+  if (!RegisterClass(&wc))
+    return FALSE;
+
+  return TRUE;
 
 }
 
@@ -576,7 +599,7 @@ HWND InitInstance(HINSTANCE hInstance,LPSTR pszCmdLine,int nCmdShow)
   hwndMain = CreateWindowEx(
                0,
                wchWndClass,
-               L"Notepad2",
+               L"notepad2md",
                WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                wi.x,
                wi.y,
@@ -761,7 +784,7 @@ HWND InitInstance(HINSTANCE hInstance,LPSTR pszCmdLine,int nCmdShow)
   UpdateToolbar();
   UpdateStatusbar();
 
-  /* MDPreView：恢复上次的预览开关状态（此时窗口已建好，可安全创建控件）*/
+  /* notepad2md：恢复上次的预览开关状态（此时窗口已建好，可安全创建控件）*/
   if (bShowPreview)
     PreviewToggle(TRUE);
 
@@ -812,7 +835,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
         // Terminate file watching
         InstallFileWatching(NULL);
 
-        // MDPreView: release preview control
+        // notepad2md: release preview control
+        if (IsWindow(hwndSplitBar))
+          DestroyWindow(hwndSplitBar);
+        hwndSplitBar = NULL;
         if (IsWindow(hwndPreview))
           DestroyWindow(hwndPreview);
         hwndPreview = NULL;
@@ -1512,7 +1538,7 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
   int   cchIniSection = 0;
 
 #ifdef BAR_DEBUG
-#define BAR_DBG(...) do { FILE *fD = fopen("C:\\Project\\MDPreView\\bar_debug.log","a"); \
+#define BAR_DBG(...) do { FILE *fD = fopen("bar_debug.log","a"); \
     if (fD) { fprintf(fD,__VA_ARGS__); fputc('\n',fD); fclose(fD); } } while (0)
 #else
 #define BAR_DBG(...) ((void)0)
@@ -1772,7 +1798,7 @@ void MsgThemeChanged(HWND hwnd,WPARAM wParam,LPARAM lParam)
 //
 /******************************************************************************
 *
-* MDPreView: Live Markdown Preview
+* notepad2md: Live Markdown Preview
 *
 */
 /*
@@ -1783,6 +1809,254 @@ void MsgThemeChanged(HWND hwnd,WPARAM wParam,LPARAM lParam)
   其它代码页（如中文系统常见的 GBK/936）需先转成 UTF-8，否则 md4c
   会把多字节字符拆碎。
 */
+/*
+  滚动同步用的标题行号表。
+
+  渲染后的预览 HTML 里，标题按文档顺序排列；这里把源码中每个 ATX 标题
+  （# 开头）所在的行号按同样顺序记下来，于是"编辑器第一个可见行 → 该行上方
+  最近的标题序号 → 预览里第 N 个标题"就能对上。
+
+  扫描器只认 ATX 标题、且会跳过围栏代码块（``` / ~~~）与缩进代码块，但仍可能
+  与 md4c 的判断有出入（Setext 标题、引用块里的标题等）。因此预览侧会先核对
+  DOM 中的实际标题数，对不上就不同步 —— 宁可不动，也不能滚错。
+*/
+#define MAX_SYNC_HEADINGS 4096
+static int aiHeadingLines[MAX_SYNC_HEADINGS];
+static int iHeadingLines = 0;
+static int iLastSyncedHeading = -1;
+
+static void PreviewScanHeadings(const char *pText)
+{
+  const char *p = pText;
+  int iLine = 0;
+  int iFence = 0;   /* 围栏长度，0 表示不在围栏内 */
+
+  iHeadingLines = 0;
+  iLastSyncedHeading = -1;
+
+  if (!pText)
+    return;
+
+  while (*p) {
+    const char *pEnd = p;
+    const char *q;
+    int iIndent = 0;
+    int iRun;
+
+    while (*pEnd && *pEnd != '\n')
+      pEnd++;
+
+    q = p;
+    while (q < pEnd && *q == ' ') {
+      q++;
+      iIndent++;
+    }
+
+    /* 围栏代码块的开头 / 结尾（``` 或 ~~~，至少 3 个） */
+    if (pEnd - q >= 3 && (*q == '`' || *q == '~')) {
+      char chFence = *q;
+      iRun = 0;
+      while (q + iRun < pEnd && q[iRun] == chFence)
+        iRun++;
+      if (iRun >= 3) {
+        if (iFence == 0)
+          iFence = iRun;
+        else if (iRun >= iFence)
+          iFence = 0;
+        goto next_line;
+      }
+    }
+
+    if (iFence == 0 && iIndent < 4 && *q == '#') {
+      iRun = 0;
+      while (q + iRun < pEnd && q[iRun] == '#')
+        iRun++;
+      if (iRun >= 1 && iRun <= 6 &&
+          (q + iRun >= pEnd || q[iRun] == ' ' || q[iRun] == '\t')) {
+        if (iHeadingLines >= MAX_SYNC_HEADINGS)
+          return;   /* 标题多到离谱：表满即停，数量对不上会自动停用同步 */
+        aiHeadingLines[iHeadingLines++] = iLine;
+      }
+    }
+
+  next_line:
+    if (*pEnd == '\n') {
+      p = pEnd + 1;
+      iLine++;
+    }
+    else
+      break;
+  }
+}
+
+
+/* 编辑器纵向滚动时，把预览滚到对应标题处 */
+static void PreviewSyncScroll(void)
+{
+  int iTop, iLo, iHi, iFound = -1;
+
+  if (!bShowPreview || !IsWindow(hwndPreview))
+    return;
+  if (iHeadingLines <= 0 || fWordWrap)   /* 自动换行时行号对不上，不同步 */
+    return;
+
+  iTop = (int)SendMessage(hwndEdit,SCI_GETFIRSTVISIBLELINE,0,0);
+
+  /* 二分：最后一个行号 <= iTop 的标题 */
+  iLo = 0;
+  iHi = iHeadingLines - 1;
+  while (iLo <= iHi) {
+    int iMid = (iLo + iHi) / 2;
+    if (aiHeadingLines[iMid] <= iTop) {
+      iFound = iMid;
+      iLo = iMid + 1;
+    }
+    else
+      iHi = iMid - 1;
+  }
+
+  if (iFound < 0 || iFound == iLastSyncedHeading)
+    return;
+
+  iLastSyncedHeading = iFound;
+  Preview_ScrollToHeading(hwndPreview, iFound, iHeadingLines);
+}
+
+
+/* ===========================================================================
+   预览分隔条
+
+   两栏之间原本无缝，没有任何窗口能接收鼠标。这里放一个 6px 宽的子窗口
+   作为可拖动分隔条：拖动改变编辑区宽度占比，双击复位到 50/50。
+   与 hwndEditFrame / hwndPreview 同级，布局在 MsgSize() 里统一安排。
+   =========================================================================== */
+
+#define PREVIEW_SPLITTER_WIDTH 6
+
+/* 把千分比换算成编辑区像素宽，并保证两栏都至少 MIN 像素 */
+static int PreviewSplitCalcLeft(int cx)
+{
+  int leftW = (int)((double)iPreviewSplitPermille * cx / 1000.0);
+  if (leftW < 120)
+    leftW = 120;
+  if (leftW > cx - 120 - PREVIEW_SPLITTER_WIDTH)
+    leftW = cx - 120 - PREVIEW_SPLITTER_WIDTH;
+  if (leftW < 0)
+    leftW = 0;
+  return leftW;
+}
+
+/* 拖动中：根据鼠标屏幕 X 重算千分比并立即重排 */
+static void PreviewSplitDragTo(int screenX)
+{
+  RECT rcClient;
+  POINT pt;
+  int cx, permille;
+
+  GetClientRect(hwndMain,&rcClient);
+  cx = rcClient.right - rcClient.left;
+  if (cx <= 0)
+    return;
+
+  pt.x = screenX;
+  pt.y = 0;
+  ScreenToClient(hwndMain,&pt);
+
+  permille = (int)((double)pt.x * 1000.0 / cx + 0.5);
+  if (permille < 50) permille = 50;
+  if (permille > 950) permille = 950;
+  if (permille == iPreviewSplitPermille)
+    return;
+
+  iPreviewSplitPermille = permille;
+  SendWMSize(hwndMain);
+}
+
+
+static LRESULT CALLBACK SplitBarWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
+{
+  switch(umsg)
+  {
+    case WM_SETCURSOR:
+      SetCursor(LoadCursor(NULL,IDC_SIZEWE));
+      return TRUE;
+
+    case WM_LBUTTONDOWN:
+      bSplitDragging = TRUE;
+      SetCapture(hwnd);
+      return 0;
+
+    case WM_MOUSEMOVE:
+      if (bSplitDragging) {
+        POINT pt;
+        pt.x = (short)LOWORD(lParam);
+        pt.y = (short)HIWORD(lParam);
+        ClientToScreen(hwnd,&pt);
+        PreviewSplitDragTo(pt.x);
+      }
+      return 0;
+
+    case WM_LBUTTONUP:
+      if (bSplitDragging) {
+        bSplitDragging = FALSE;
+        ReleaseCapture();
+        SaveSettings(FALSE);   /* 拖动结束才落盘，避免拖动中频繁写 ini */
+      }
+      return 0;
+
+    case WM_LBUTTONDBLCLK:
+      iPreviewSplitPermille = 500;
+      SendWMSize(hwndMain);
+      SaveSettings(FALSE);
+      return 0;
+
+    case WM_PAINT:
+      {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd,&ps);
+        RECT rc;
+        GetClientRect(hwnd,&rc);
+        /* 浅灰中缝，与 3D 控件背景区分 */
+        FillRect(hdc,&rc,(HBRUSH)(COLOR_3DSHADOW+1));
+        EndPaint(hwnd,&ps);
+      }
+      return 0;
+
+    case WM_ERASEBKGND:
+      return 1;
+  }
+
+  return DefWindowProc(hwnd,umsg,wParam,lParam);
+}
+
+
+/* 把宽字符串转成 LocalAlloc 出来的 UTF-8 串；调用方用 LocalFree 释放。
+   失败或空串返回 NULL。 */
+static char *Utf8FromWideStr(const WCHAR *wch)
+{
+  int cb;
+  char *psz;
+
+  if (!wch || !*wch)
+    return NULL;
+
+  cb = WideCharToMultiByte(CP_UTF8,0,wch,-1,NULL,0,NULL,NULL);
+  if (cb <= 0)
+    return NULL;
+
+  psz = LocalAlloc(LPTR,cb);
+  if (!psz)
+    return NULL;
+
+  if (WideCharToMultiByte(CP_UTF8,0,wch,-1,psz,cb,NULL,NULL) <= 0) {
+    LocalFree(psz);
+    return NULL;
+  }
+
+  return psz;
+}
+
+
 void PreviewUpdate( void )
 {
   int iLen;
@@ -1790,11 +2064,20 @@ void PreviewUpdate( void )
   char *pchText;
   char *pchUtf8 = NULL;
   char *pchHtml;
+  char *pszCopy = NULL;
+  char *pszCopied = NULL;
+  WCHAR wchCopy[64], wchCopied[64];
 
   KillTimer(hwndMain,ID_PREVIEWTIMER);
 
   if (!bShowPreview || !IsWindow(hwndPreview))
     return;
+
+  /* 复制按钮文案（跟随界面语言）→ UTF-8 */
+  GetString(IDS_PREVIEW_COPY,wchCopy,COUNTOF(wchCopy));
+  GetString(IDS_PREVIEW_COPIED,wchCopied,COUNTOF(wchCopied));
+  pszCopy = Utf8FromWideStr(wchCopy);
+  pszCopied = Utf8FromWideStr(wchCopied);
 
   iLen = (int)SendMessage(hwndEdit,SCI_GETLENGTH,0,0);
 
@@ -1834,10 +2117,13 @@ void PreviewUpdate( void )
     }
   }
 
+  /* 记录标题行号，供编辑器 → 预览滚动同步使用 */
+  PreviewScanHeadings(pchUtf8 ? pchUtf8 : pchText);
+
   if (!bPreviewDocLoaded)
   {
     /* 首次（或面板刚重建）：整页加载，把 CSS 外壳一并带进去 */
-    pchHtml = Markdown_Render(pchUtf8 ? pchUtf8 : pchText);
+    pchHtml = Markdown_RenderEx(pchUtf8 ? pchUtf8 : pchText,pszCopy,pszCopied);
     if (pchHtml) {
       if (Preview_SetHtml(hwndPreview,pchHtml))
         bPreviewDocLoaded = TRUE;
@@ -1849,7 +2135,7 @@ void PreviewUpdate( void )
   {
     /* 增量刷新：只把 body 片段写进内容容器的 innerHTML，不重载文档。
        之前每次按键都整页重载，造成明显的白屏闪烁。 */
-    pchHtml = Markdown_RenderFragment(pchUtf8 ? pchUtf8 : pchText);
+    pchHtml = Markdown_RenderFragmentEx(pchUtf8 ? pchUtf8 : pchText,pszCopy,pszCopied);
     if (pchHtml) {
       if (!Preview_SetContent(hwndPreview,pchHtml))
         bPreviewDocLoaded = FALSE;   /* 外壳丢了，下次做整页重载 */
@@ -1860,6 +2146,10 @@ void PreviewUpdate( void )
   LocalFree(pchText);
   if (pchUtf8)
     LocalFree(pchUtf8);
+  if (pszCopy)
+    LocalFree(pszCopy);
+  if (pszCopied)
+    LocalFree(pszCopied);
 }
 
 /*
@@ -1888,9 +2178,18 @@ void PreviewToggle( BOOL bShow )
       }
       bPreviewDocLoaded = FALSE;   /* 新控件 = 空文档，需整页加载一次 */
     }
+    if (!IsWindow(hwndSplitBar)) {
+      hwndSplitBar = CreateWindowEx(0,WC_NOTEPAD2_SPLITTER,NULL,
+                        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | CS_DBLCLKS,
+                        0,0,PREVIEW_SPLITTER_WIDTH,0,
+                        hwndMain,NULL,g_hInstance,NULL);
+    }
+    ShowWindow(hwndSplitBar,SW_SHOW);
     ShowWindow(hwndPreview,SW_SHOW);
   }
   else {
+    if (IsWindow(hwndSplitBar))
+      ShowWindow(hwndSplitBar,SW_HIDE);
     if (IsWindow(hwndPreview))
       ShowWindow(hwndPreview,SW_HIDE);
   }
@@ -1953,15 +2252,11 @@ void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
     cy -= (rc.bottom - rc.top);
   }
 
-  hdwp = BeginDeferWindowPos(3);
+  hdwp = BeginDeferWindowPos(4);
 
   if (bShowPreview && IsWindow(hwndPreview))
   {
-    int cxEdit = (cx - cxPreviewSplit) / 2;
-    if (cxEdit < 120)
-      cxEdit = 120;
-    if (cxEdit > cx - 120)
-      cxEdit = cx - 120;
+    int cxEdit = PreviewSplitCalcLeft(cx);
 
     DeferWindowPos(hdwp,hwndEditFrame,NULL,x,y,cxEdit,cy,
                    SWP_NOZORDER | SWP_NOACTIVATE);
@@ -1970,8 +2265,12 @@ void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
                    cxEdit-2*cxEditFrame,cy-2*cyEditFrame,
                    SWP_NOZORDER | SWP_NOACTIVATE);
 
-    DeferWindowPos(hdwp,hwndPreview,NULL,x+cxEdit+cxPreviewSplit,y,
-                   cx-cxEdit-cxPreviewSplit,cy,
+    if (IsWindow(hwndSplitBar))
+      DeferWindowPos(hdwp,hwndSplitBar,NULL,x+cxEdit,y,PREVIEW_SPLITTER_WIDTH,cy,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+
+    DeferWindowPos(hdwp,hwndPreview,NULL,x+cxEdit+PREVIEW_SPLITTER_WIDTH,y,
+                   cx-cxEdit-PREVIEW_SPLITTER_WIDTH,cy,
                    SWP_NOZORDER | SWP_NOACTIVATE);
   }
 
@@ -2716,7 +3015,7 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
           if ((bModified || iEncoding != iOriginalEncoding) && MsgBox(MBOKCANCEL,IDS_ASK_RECODE) != IDOK)
             return(0);
 
-          if (RecodeDlg(hwnd,&iNewEncoding)) {
+          if (RecodeDlg(hwnd,szCurFile,&iNewEncoding)) {
 
             lstrcpy(tchCurFile2,szCurFile);
             iSrcEncoding = iNewEncoding;
@@ -4808,6 +5107,10 @@ LRESULT MsgNotify(HWND hwnd,WPARAM wParam,LPARAM lParam)
       {
         case SCN_UPDATEUI:
 
+          /* 纯滚动不触发下面的重排版分支，单独处理同步滚动 */
+          if (scn->updated & SC_UPDATE_V_SCROLL)
+            PreviewSyncScroll();
+
           if (scn->updated & ~(SC_UPDATE_V_SCROLL | SC_UPDATE_H_SCROLL)) {
 
             UpdateToolbar();
@@ -5089,7 +5392,7 @@ LRESULT MsgNotify(HWND hwnd,WPARAM wParam,LPARAM lParam)
             switch (pnmm->dwItemSpec)
             {
               case STATUS_CODEPAGE:
-                SendMessage(hwnd,WM_COMMAND,MAKELONG(IDM_ENCODING_SELECT,1),0);
+                SendMessage(hwnd,WM_COMMAND,MAKELONG(IDM_ENCODING_RECODE,1),0);
                 return TRUE;
 
               case STATUS_EOLMODE:
@@ -5359,6 +5662,10 @@ void LoadSettings()
   bShowPreview = IniSectionGetInt(pIniSection,L"MarkdownPreview",0);
   if (bShowPreview) bShowPreview = 1;
 
+  iPreviewSplitPermille = IniSectionGetInt(pIniSection,L"PreviewSplitPermille",500);
+  if (iPreviewSplitPermille < 50) iPreviewSplitPermille = 50;
+  if (iPreviewSplitPermille > 950) iPreviewSplitPermille = 950;
+
   cxEncodingDlg = IniSectionGetInt(pIniSection,L"EncodingDlgSizeX",256);
   cxEncodingDlg = max(cxEncodingDlg,0);
 
@@ -5549,6 +5856,7 @@ void SaveSettings(BOOL bSaveSettingsNow)
   IniSectionSetInt(pIniSection,L"ShowToolbar",bShowToolbar);
   IniSectionSetInt(pIniSection,L"ShowStatusbar",bShowStatusbar);
   IniSectionSetInt(pIniSection,L"MarkdownPreview",bShowPreview);
+  IniSectionSetInt(pIniSection,L"PreviewSplitPermille",iPreviewSplitPermille);
   IniSectionSetInt(pIniSection,L"EncodingDlgSizeX",cxEncodingDlg);
   IniSectionSetInt(pIniSection,L"EncodingDlgSizeY",cyEncodingDlg);
   IniSectionSetInt(pIniSection,L"RecodeDlgSizeX",cxRecodeDlg);
@@ -6105,7 +6413,7 @@ int CheckIniFile(LPWSTR lpszFile,LPCWSTR lpszModule)
 int CheckIniFileRedirect(LPWSTR lpszFile,LPCWSTR lpszModule)
 {
   WCHAR tch[MAX_PATH];
-  if (GetPrivateProfileString(L"Notepad2",L"Notepad2.ini",L"",tch,COUNTOF(tch),lpszFile)) {
+  if (GetPrivateProfileString(L"notepad2md",L"notepad2md.ini",L"",tch,COUNTOF(tch),lpszFile)) {
     if (CheckIniFile(tch,lpszModule)) {
       lstrcpy(lpszFile,tch);
       return(1);
@@ -6156,7 +6464,7 @@ int FindIniFile() {
   bFound = CheckIniFile(tchTest,tchModule);
 
   if (!bFound) {
-    lstrcpy(tchTest,L"Notepad2.ini");
+    lstrcpy(tchTest,L"notepad2md.ini");
     bFound = CheckIniFile(tchTest,tchModule);
   }
 
@@ -6190,7 +6498,7 @@ int TestIniFile() {
     PathAppend(szIniFile,PathFindFileName(wchModule));
     PathRenameExtension(szIniFile,L".ini");
     if (!PathFileExists(szIniFile)) {
-      lstrcpy(PathFindFileName(szIniFile),L"Notepad2.ini");
+      lstrcpy(PathFindFileName(szIniFile),L"notepad2md.ini");
       if (!PathFileExists(szIniFile)) {
         lstrcpy(PathFindFileName(szIniFile),PathFindFileName(wchModule));
         PathRenameExtension(szIniFile,L".ini");
@@ -6317,6 +6625,7 @@ void UpdateStatusbar()
   WCHAR tchEOLMode[32];
   WCHAR tchOvrMode[32];
   WCHAR tchLexerName[128];
+  WCHAR tchEncoding[64];
 
   if (!bShowStatusbar)
     return;
@@ -6377,7 +6686,15 @@ void UpdateStatusbar()
 
   StatusSetText(hwndStatus,STATUS_DOCPOS,tchDocPos);
   StatusSetText(hwndStatus,STATUS_DOCSIZE,tchDocSize);
-  StatusSetText(hwndStatus,STATUS_CODEPAGE,mEncoding[iEncoding].wchLabel);
+  // annotate the BOM state, which is otherwise ambiguous for UTF-8/UTF-16
+  StrCpyN(tchEncoding,mEncoding[iEncoding].wchLabel,COUNTOF(tchEncoding));
+  if ((mEncoding[iEncoding].uFlags & (NCP_UNICODE|NCP_UTF8)) &&
+      !(mEncoding[iEncoding].uFlags & (NCP_UNICODE_BOM|NCP_UTF8_SIGN))) {
+    WCHAR tchNoBOM[32];
+    GetString(IDS_ENCODING_NOBOM,tchNoBOM,COUNTOF(tchNoBOM));
+    StrCatN(tchEncoding,tchNoBOM,COUNTOF(tchEncoding));
+  }
+  StatusSetText(hwndStatus,STATUS_CODEPAGE,tchEncoding);
   StatusSetText(hwndStatus,STATUS_EOLMODE,tchEOLMode);
   StatusSetText(hwndStatus,STATUS_OVRMODE,tchOvrMode);
   StatusSetText(hwndStatus,STATUS_LEXER,tchLexerName);
@@ -6593,7 +6910,7 @@ BOOL FileLoad(BOOL bDontSave,BOOL bNew,BOOL bReload,BOOL bNoEncDetect,LPCWSTR lp
       iFileWatchingMode = 0;
     InstallFileWatching(szCurFile);
 
-    // MDPreView: 打开 Markdown 文件时自动开启预览
+    // notepad2md: 打开 Markdown 文件时自动开启预览
     if (PathMatchSpec(szCurFile,L"*.md") ||
         PathMatchSpec(szCurFile,L"*.markdown") ||
         PathMatchSpec(szCurFile,L"*.mdown") ||
@@ -7327,7 +7644,7 @@ void ShowNotifyIcon(HWND hwnd,BOOL bAdd)
   nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
   nid.uCallbackMessage = WM_TRAYMESSAGE;
   nid.hIcon = hIcon;
-  lstrcpy(nid.szTip,L"Notepad2");
+  lstrcpy(nid.szTip,L"notepad2md");
 
   if(bAdd)
     Shell_NotifyIcon(NIM_ADD,&nid);
