@@ -38,8 +38,13 @@
 #define VERSION_ORIGINALFILENAME     L"notepad2md.exe"
 #define VERSION_AUTHORNAME           L"Florian Balmer"
 #define VERSION_WEBPAGEDISPLAY       L"flo's freeware - http://www.flos-freeware.ch"
+#define VERSION_EMAILDISPLAY         L"florian.balmer@gmail.com"
 
 /* ---- 派生项目（notepad2md）信息 ---------------------------------------- */
+
+/* 「基于…修改」一行，显示在 About 对话框版本号下方 */
+#define VERSION_MODIFIED_FROM        L"基于 Notepad2 4.2.25 (Florian Balmer) 修改"
+#define VERSION_MODIFIED_FROM_EN     L"Based on Notepad2 4.2.25 (Florian Balmer)"
 
 /* 派生项目维护者与主页（主页指向公开仓库地址） */
 #define VERSION_MAINTAINER           L"SorenBoot"

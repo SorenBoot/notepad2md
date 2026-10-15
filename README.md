@@ -33,6 +33,7 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 
 - **单 exe，约 2.9 MB（x64）** —— 静态链接 libgcc / libstdc++，拷贝即用
 - **零运行时依赖** —— 只依赖 Windows 系统 DLL（Win7 起全部自带）
+- 内存占用：基线约 15.6 MB（RSS，未开预览时实测）；开启预览后 MSHTML 引擎会额外占用一定内存
 
 **Markdown 预览**
 

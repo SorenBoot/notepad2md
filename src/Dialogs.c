@@ -250,6 +250,16 @@ INT_PTR CALLBACK AboutDlgProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
           SetDlgItemText(hwnd,IDC_WEBPAGE,wch);
         }
 
+        /* 原作者邮箱（SysLink），点击后由 WM_NOTIFY 外开 */
+        if (GetDlgItem(hwnd,IDC_EMAIL) == NULL) {
+          SetDlgItemText(hwnd,IDC_EMAIL2,VERSION_EMAILDISPLAY);
+          ShowWindow(GetDlgItem(hwnd,IDC_EMAIL2),SW_SHOWNORMAL);
+        }
+        else {
+          wsprintf(wch,L"<A HREF=\"mailto:%s\">%s</A>",VERSION_EMAILDISPLAY,VERSION_EMAILDISPLAY);
+          SetDlgItemText(hwnd,IDC_EMAIL,wch);
+        }
+
         /* 派生项目主页（SysLink），点击后由 WM_NOTIFY 外开 */
         if (GetDlgItem(hwnd,IDC_MYWEBPAGE) == NULL) {
           SetDlgItemText(hwnd,IDC_MYWEBPAGE2,VERSION_MAINTAINER_WEB);
@@ -274,6 +284,12 @@ INT_PTR CALLBACK AboutDlgProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
             {
               if (pnmhdr->idFrom == IDC_WEBPAGE) {
                 ShellExecute(hwnd,L"open",L"http://www.flos-freeware.ch",NULL,NULL,SW_SHOWNORMAL);
+              }
+              else if (pnmhdr->idFrom == IDC_EMAIL) {
+                /* 原作者邮箱：用 mailto: 唤起系统邮件程序 */
+                WCHAR wchMail[256];
+                wsprintf(wchMail,L"mailto:%s",VERSION_EMAILDISPLAY);
+                ShellExecute(hwnd,L"open",wchMail,NULL,NULL,SW_SHOWNORMAL);
               }
               else if (pnmhdr->idFrom == IDC_MYWEBPAGE) {
                 ShellExecute(hwnd,L"open",VERSION_MAINTAINER_WEB,NULL,NULL,SW_SHOWNORMAL);
