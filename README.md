@@ -19,6 +19,7 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 
 - 基于 Notepad2 4.2.25 + Scintilla 2.24 + md4c
 - 新增 Markdown 实时预览窗格（MSHTML 引擎，系统自带，无需安装运行时）
+- 新增编码自动识别（无 BOM 的 UTF-8 / GBK / Big5 等均可正确打开，原版会乱码）
 - 新增简体中文界面（与英文界面打包在同一 exe 内，按系统区域自动切换）
 - 其他改动均为使其可用 MinGW-w64 编译的最小必要修改，未改动原版功能逻辑
 
@@ -30,9 +31,8 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 
 **体积与依赖**
 
-- **单 exe，约 2.9 MB** —— 静态链接 libgcc / libstdc++ / winpthread，拷贝即用
+- **单 exe，约 2.9 MB（x64）** —— 静态链接 libgcc / libstdc++，拷贝即用
 - **零运行时依赖** —— 只依赖 Windows 系统 DLL（Win7 起全部自带）
-- 内存占用：空载约 15 MB，开启预览约 40 MB（MSHTML 约占 25 MB）
 
 **Markdown 预览**
 
@@ -45,6 +45,17 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 - **链接外开** —— 预览里的链接用系统浏览器打开，不在窗格内跳转
 - **编码自动转换** —— UTF-8 与 GBK 等本地代码页都转成 UTF-8 渲染，中文文件无乱码
 - **安全** —— HTML 标签被转义（`NOHTML`），预览不执行脚本
+
+**编码处理（本次开发重点）**
+
+- **打开时自动识别编码** —— 无需手动选择，无 BOM 的 UTF-8、GBK、Big5、Shift-JIS、EUC-KR 均可正确识别
+- **识别过程严格校验** —— 对每个候选 8-bit 代码页做「解码→再编码→字节比对」往返验证，只有字节完全一致才采纳，不会把 GBK 误判成 Big5
+- **识别优先级**：BOM → NUL 字节（无 BOM 的 UTF-16）→ 合法 UTF-8 → 候选 8-bit 代码页（中文系统优先）→ 系统默认
+- **只读文件头 64 KB** 做判断，大文件不会卡顿；即使读在字符中间被截断，也允许回退重试
+- **重新打开为指定编码** —— 猜错时可手动以 ANSI / OEM / UTF-8 / Unicode 等方式重新打开
+- **编码转换** —— 在已支持的编码之间互转，用于处理历史遗留的 GBK 文件等
+
+> 打开无 BOM 的 UTF-8 文件时，原版 Notepad2 会按系统代码页误读成乱码；本项目修复了这一问题。
 
 **编辑能力（继承自 Notepad2）**
 
@@ -65,8 +76,10 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 | 项目 | 要求 |
 |---|---|
 | 操作系统 | Windows 7 SP1 / 8 / 8.1 / 10 / 11 |
-| 架构 | x64（不支持 32 位 Windows） |
-| 运行时 | **无** |
+| 架构 | x86 与 x64 均可 |
+| 运行时 | **无**（静态链接，无需 VC++ 运行库等） |
+
+当前仓库提供的是 **x64** 预编译版本；32 位版本可自行编译，源码对两种架构均无限制。
 
 MSHTML 预览渲染依赖系统组件，Win7 起均内置。预览引擎为系统自带的 MSHTML（Trident）
 而非 WebView2：不额外分发运行时、进程内渲染、内存更省；代价是 CSS 支持止步于 IE11
@@ -78,9 +91,11 @@ MSHTML 预览渲染依赖系统组件，Win7 起均内置。预览引擎为系�
 
 前往 [Releases](https://github.com/SorenBoot/notepad2md/releases) 页面。
 
+> 当前尚未发布预编译版本，请按下方「方式二」自行编译，或等首个 Release。
+
 ### 方式二：自行编译
 
-需要 **MinGW-w64**，GCC 11 或更高。推荐便携版 [w64devkit](https://github.com/skeeto/w64devkit)
+需要 **MinGW-w64**。推荐便携版 [w64devkit](https://github.com/skeeto/w64devkit)
 （约 100 MB，解压即用）。
 
 ```
@@ -98,6 +113,9 @@ make run
 ```
 
 产物输出到 `bin\notepad2md.exe`。
+
+构建脚本默认产出 **x64**。要编 32 位，把 w64devkit 换成 i686 工具链后执行 `make` 即可，
+源码未对架构作任何限定。
 
 默认工具链路径为 `C:\Tools\W64DEVKIT\w64devkit\w64devkit`，装在别处时：
 
@@ -137,7 +155,7 @@ notepad2md/
 | 文件 | 改动 | 原因 |
 |---|---|---|
 | 9 个源文件 | `_WIN32_WINNT` 0x0500/0x0501 → 0x0601 | 兼容底线从 XP 提升到 Win7 |
-| `src/Edit.c` | `FARPROC` → 显式函数指针类型 + 强转 | GCC 16 的 `FARPROC` 为严格无参类型 |
+| `src/Edit.c` | `FARPROC` → 显式函数指针类型 + 强转；新增 `DetectEncodingFromFile` 编码猜测 | GCC 下 `FARPROC` 为严格无参类型；编码自动识别 |
 | `src/Helpers.c` | 同上，另 `GetThemedDialogFont` 内联调用改为类型化 | 同上 |
 | `src/Helpers.h` | `Toolbar_SetButtons` 参数 `void*` → `LPCTBBUTTON` | 与实现一致，MSVC 容忍而 GCC 不容忍 |
 | `src/Dlapi.c` | COM 接口调用加 `(void**)` / `(const ITEMIDLIST**)` 强转 | MinGW 的 `shlobj.h` 参数类型更严格 |
