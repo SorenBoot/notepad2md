@@ -52,7 +52,8 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 - **识别过程严格校验** —— 对每个候选 8-bit 代码页做「解码→再编码→字节比对」往返验证，只有字节完全一致才采纳，不会把 GBK 误判成 Big5
 - **识别优先级**：BOM → NUL 字节（无 BOM 的 UTF-16）→ 合法 UTF-8 → 候选 8-bit 代码页（中文系统优先）→ 系统默认
 - **只读文件头 64 KB** 做判断，大文件不会卡顿；即使读在字符中间被截断，也允许回退重试
-- **重新打开为指定编码** —— 猜错时可手动以 ANSI / OEM / UTF-8 / Unicode 等方式重新打开
+- **重新打开为指定编码** —— 猜错时可手动以 ANSI / OEM / UTF-8 / Unicode 等方式重新打开（`Ctrl+Shift+A` / `Ctrl+Shift+O` / `Ctrl+Shift+F` / `Shift+F8`）
+- **重新编码** —— `F8` 把当前内容转成另一种编码保存；`F9` 选择编码
 - **编码转换** —— 在已支持的编码之间互转，用于处理历史遗留的 GBK 文件等
 
 > 打开无 BOM 的 UTF-8 文件时，原版 Notepad2 会按系统代码页误读成乱码；本项目修复了这一问题。
@@ -145,6 +146,7 @@ notepad2md/
 ├── scintilla/            编辑引擎（仅编译必需文件）
 ├── md4c/                 Markdown 解析器（MIT）
 ├── res/                  图标 / 光标 / 位图 / manifest
+├── screenshot.png        界面截图（README 引用）
 └── LICENSE-THIRD-PARTY/  第三方许可证
 ```
 
@@ -188,7 +190,7 @@ notepad2md/
 第三方组件许可证见 [LICENSE-THIRD-PARTY/](LICENSE-THIRD-PARTY/)：
 
 - Notepad2 —— BSD 3-Clause
-- Scintilla —— 类 BSD（[License](LICENSE-THIRD-PARTY/Scintilla-License.txt)）
+- Scintilla —— 上游自带许可证（BSD 风格，见 [License](LICENSE-THIRD-PARTY/Scintilla-License.txt)）
 - md4c —— MIT（[License](LICENSE-THIRD-PARTY/md4c-License.md)）
 
 ## 致谢

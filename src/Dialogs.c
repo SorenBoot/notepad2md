@@ -216,6 +216,9 @@ INT_PTR CALLBACK AboutDlgProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
 
         SetDlgItemText(hwnd,IDC_VERSION,VERSION_FILEVERSION_LONG);
         SetDlgItemText(hwnd,IDC_COPYRIGHT,VERSION_LEGALCOPYRIGHT_SHORT);
+        /* 派生项目自身版权行（若对话框里有该控件） */
+        if (GetDlgItem(hwnd,IDC_COPYRIGHT2))
+          SetDlgItemText(hwnd,IDC_COPYRIGHT2,VERSION_LEGALCOPYRIGHT_MINE);
 
         /* 「基于 Notepad2 … 修改」与「修改/维护」两行的提示文字来自资源，
            因此可随界面语言切换；姓名与链接是固定的。 */
