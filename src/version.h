@@ -22,7 +22,7 @@
 
 #define VERSION_FILEVERSION_NUM      4,2,25,0
 #define VERSION_FILEVERSION_SHORT    L"4.2.25"
-#define VERSION_FILEVERSION_LONG     L"notepad2md 1.0"
+#define VERSION_FILEVERSION_LONG     L"notepad2md 1.0.0"
 #define VERSION_LEGALCOPYRIGHT_SHORT L"Copyright (c) 2004-2011 Florian Balmer"
 #define VERSION_LEGALCOPYRIGHT_LONG  L"(c) Florian Balmer 2004-2011"
 #ifdef _M_AMD64
@@ -42,6 +42,6 @@
 #define VERSION_MODIFIED_FROM        L"基于 Notepad2 4.2.25 (Florian Balmer) 修改"
 #define VERSION_MODIFIED_FROM_EN     L"Based on Notepad2 4.2.25 (Florian Balmer)"
 
-/* 派生项目维护者与主页（两者保持一致，均指向 GitHub 账号） */
-#define VERSION_MAINTAINER           L"JackZ695"
-#define VERSION_MAINTAINER_WEB       L"https://github.com/JackZ695"
+/* 派生项目维护者与主页（主页指向公开仓库地址） */
+#define VERSION_MAINTAINER           L"SorenBoot"
+#define VERSION_MAINTAINER_WEB       L"https://github.com/SorenBoot/notepad2md"

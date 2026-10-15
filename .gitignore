@@ -94,3 +94,5 @@ tests/README.md
 /md_debug.log
 /bar_debug.log
 /preview_test.log
+docs/
+tests/
