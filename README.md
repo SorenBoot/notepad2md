@@ -39,23 +39,19 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 
 - **实时预览** —— 左右分栏，边打边看（`Ctrl+Alt+M` 开关）
 - **可拖动分隔条** —— 拖动调整两栏宽度，双击复位 50/50，比例自动记忆
-- **增量刷新，不闪屏** —— 首次加载完整文档，之后只更新内容容器，滚动位置保留
-- **输入防抖** —— 连续按键合并（约 120 ms），不会每敲一个字都重排
+- **刷新不闪屏** —— 输入连续时合并刷新，不会每敲一个字都重排
 - **GFM 语法** —— 表格、任务列表、删除线、脚注、围栏代码块
 - **代码块复制按钮** —— 预览里的围栏代码块带语言标签与「复制」按钮
 - **链接外开** —— 预览里的链接用系统浏览器打开，不在窗格内跳转
-- **编码自动转换** —— UTF-8 与 GBK 等本地代码页都转成 UTF-8 渲染，中文文件无乱码
-- **安全** —— HTML 标签被转义（`NOHTML`），预览不执行脚本
+- **安全** —— HTML 标签被转义，预览不执行脚本
 
-**编码处理（本次开发重点）**
+**编码处理**
 
 - **打开时自动识别编码** —— 无需手动选择，无 BOM 的 UTF-8、GBK、Big5、Shift-JIS、EUC-KR 均可正确识别
-- **识别过程严格校验** —— 对每个候选 8-bit 代码页做「解码→再编码→字节比对」往返验证，只有字节完全一致才采纳，不会把 GBK 误判成 Big5
-- **识别优先级**：BOM → NUL 字节（无 BOM 的 UTF-16）→ 合法 UTF-8 → 候选 8-bit 代码页（中文系统优先）→ 系统默认
-- **只读文件头 64 KB** 做判断，大文件不会卡顿；即使读在字符中间被截断，也允许回退重试
-- **重新打开为指定编码** —— 猜错时可手动以 ANSI / OEM / UTF-8 / Unicode 等方式重新打开（`Ctrl+Shift+A` / `Ctrl+Shift+O` / `Ctrl+Shift+F` / `Shift+F8`）
+- **识别准确** —— 对候选编码做严格校验，不会把 GBK 误判成 Big5
+- **只读文件头 64 KB** 做判断，大文件不会卡顿
+- **猜错可手动纠正** —— 以 ANSI / OEM / UTF-8 / Unicode 等方式重新打开（`Ctrl+Shift+A` / `Ctrl+Shift+O` / `Ctrl+Shift+F` / `Shift+F8`）
 - **重新编码** —— `F8` 把当前内容转成另一种编码保存；`F9` 选择编码
-- **编码转换** —— 在已支持的编码之间互转，用于处理历史遗留的 GBK 文件等
 
 > 打开无 BOM 的 UTF-8 文件时，原版 Notepad2 会按系统代码页误读成乱码；本项目修复了这一问题。
 
@@ -83,9 +79,8 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 
 当前仓库提供的是 **x64** 预编译版本；32 位版本可自行编译，源码对两种架构均无限制。
 
-MSHTML 预览渲染依赖系统组件，Win7 起均内置。预览引擎为系统自带的 MSHTML（Trident）
-而非 WebView2：不额外分发运行时、进程内渲染、内存更省；代价是 CSS 支持止步于 IE11
-水平（不支持 CSS 变量 / Grid / `flex gap`）。
+预览使用系统自带的 MSHTML 引擎（非 WebView2），因此无需额外安装运行时，代价是 CSS
+支持止步于 IE11 水平（不支持 CSS 变量 / Grid / `flex gap`）。
 
 ## 获取与编译
 
@@ -152,34 +147,6 @@ notepad2md/
 ```
 
 > `docs/` 与 `tests/` 在本地开发时使用，未纳入公开仓库。
-
-## 相对原版 Notepad2 的改动
-
-| 文件 | 改动 | 原因 |
-|---|---|---|
-| 9 个源文件 | `_WIN32_WINNT` 0x0500/0x0501 → 0x0601 | 兼容底线从 XP 提升到 Win7 |
-| `src/Edit.c` | `FARPROC` → 显式函数指针类型 + 强转；新增 `DetectEncodingFromFile` 编码猜测 | GCC 下 `FARPROC` 为严格无参类型；编码自动识别 |
-| `src/Helpers.c` | 同上，另 `GetThemedDialogFont` 内联调用改为类型化 | 同上 |
-| `src/Helpers.h` | `Toolbar_SetButtons` 参数 `void*` → `LPCTBBUTTON` | 与实现一致，MSVC 容忍而 GCC 不容忍 |
-| `src/Dlapi.c` | COM 接口调用加 `(void**)` / `(const ITEMIDLIST**)` 强转 | MinGW 的 `shlobj.h` 参数类型更严格 |
-| `src/Print.cpp` | 补 `max`/`min` 宏 | MinGW 的 `minwindef.h` 不提供 |
-| 4 个文件 | ISO-8859 非 ASCII 字符 → ASCII | GCC 默认按 UTF-8 读源码 |
-| `src/Notepad2.c` | 新增 `PreviewUpdate` / `PreviewToggle`，`SCN_MODIFIED` 防抖，菜单项与 ini 持久化 | notepad2md 功能接入 |
-| `src/Notepad2.rc` / `resource.h` | 新增菜单项、加速键 `Ctrl+Alt+M`、中文资源块 | 功能与中文化 |
-| `res/Notepad2.ico` | 换成含 128×128 的多尺寸图标 | 大图标不再模糊 |
-| `res/Toolbar.bmp` | 23 → 24 个图标 | 新增分栏预览图标 |
-| `build/Makefile` | windres 规则补 `res/` 依赖 | 详见下方"两个坑" |
-
-### 两个 MinGW 特有的坑（已修）
-
-1. **工具栏完全看不见** —— MinGW 的 `commctrl.h` 在 `NTDDI_VERSION >= 0x06000000` 时给
-   `REBARBANDINFO` 追加字段，`sizeof` 变成 128 字节，而系统 comctl32 只认 112 字节布局，
-   `RB_INSERTBAND` **静默失败**。修法：向 rebar 报告传统布局大小。
-2. **改了图标不生效** —— windres 规则原先只依赖 `.rc` 与 `resource.h`，改 `res/` 下的图标
-   只重新链接而不重新编译资源。已把 `res/` 下所有文件列为依赖。
-
-> 用 `-DPREVIEW_DEBUG` / `-DBAR_DEBUG` 做过调试构建后，请先 `make clean` 再构建发布版，
-> 否则调试版的 `.o` 会被复用。
 
 ## 许可证
 
