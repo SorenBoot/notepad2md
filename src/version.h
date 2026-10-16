@@ -20,9 +20,9 @@
 ******************************************************************************/
 
 
-#define VERSION_FILEVERSION_NUM      1,0,0,0
-#define VERSION_FILEVERSION_SHORT    L"1.0.0"
-#define VERSION_FILEVERSION_LONG     L"notepad2md 1.0.0"
+#define VERSION_FILEVERSION_NUM      0,0,1,0
+#define VERSION_FILEVERSION_SHORT    L"0.0.1"
+#define VERSION_FILEVERSION_LONG     L"notepad2md 0.0.1"
 #define VERSION_LEGALCOPYRIGHT_SHORT L"Copyright (c) 2004-2011 Florian Balmer"
 #define VERSION_LEGALCOPYRIGHT_LONG  L"Copyright (c) 2025-2026 SorenBoot; based on Notepad2 (c) 2004-2011 Florian Balmer"
 /* 派生项目自身版权行，显示在 About 对话框原作者版权下方 */
