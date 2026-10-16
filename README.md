@@ -86,9 +86,7 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 
 ### 方式一：下载编译好的版本
 
-前往 [Releases](https://github.com/SorenBoot/notepad2md/releases) 页面。
-
-> 当前尚未发布预编译版本，请按下方「方式二」自行编译，或等首个 Release。
+前往 [Releases](https://github.com/SorenBoot/notepad2md/releases) 页面下载最新版本。
 
 ### 方式二：自行编译
 
