@@ -4449,8 +4449,19 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
 
         if (Output_GetGotoTarget(iLineIdx,wszFile,COUNTOF(wszFile),&iLine) &&
             iLine > 0) {
-          /* 目标不是当前文件时先打开它（路径相对于 exe 所在目录解析） */
-          if (lstrcmpi(wszFile,szCurFile) != 0) {
+          /* 判断目标是否就是当前文件：直接比字符串可能因大小写/路径形式
+             不同而误判（尤其是从命令行传来的路径），所以用完整路径规范化后
+             再比一次。仍不一致才去打开文件。 */
+          BOOL bSame = (lstrcmpi(wszFile,szCurFile) == 0);
+          if (!bSame && lstrlen(szCurFile)) {
+            WCHAR wszA[MAX_PATH], wszB[MAX_PATH];
+            lstrcpyn(wszA,wszFile,COUNTOF(wszA));
+            lstrcpyn(wszB,szCurFile,COUNTOF(wszB));
+            PathFixBackslashes(wszA);
+            PathFixBackslashes(wszB);
+            bSame = (lstrcmpi(wszA,wszB) == 0);
+          }
+          if (!bSame) {
             WCHAR wszFull[MAX_PATH];
             if (PathIsRelative(wszFile)) {
               lstrcpy(wszFull,g_wchWorkingDirectory);
@@ -4463,9 +4474,15 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
               FileLoad(TRUE,FALSE,FALSE,FALSE,wszFull);
           }
           {
-            int iPos = (int)SendMessage(hwndEdit,SCI_POSITIONFROMLINE,iLine - 1,0);
-            SendMessage(hwndEdit,SCI_GOTOPOS,iPos,0);
-            SendMessage(hwndEdit,SCI_SETFOCUS,0,0);
+            /* 顺序很重要：先定位再给焦点。
+               若先 SetFocus，Scintilla 会把 caret 恢复到焦点前的位置，
+               之后的 GOTOPOS 虽生效但紧接着又被 UI 刷新拉回，表现为没跳。 */
+            {
+              int iPos = (int)SendMessage(hwndEdit,SCI_POSITIONFROMLINE,iLine - 1,0);
+              SendMessage(hwndEdit,SCI_GOTOPOS,iPos,0);
+              SendMessage(hwndEdit,SCI_SETSEL,(WPARAM)iPos,(LPARAM)iPos);
+            }
+            SetFocus(hwndEdit);
           }
         }
       }
@@ -5398,6 +5415,28 @@ LRESULT MsgNotify(HWND hwnd,WPARAM wParam,LPARAM lParam)
           /* 纯滚动不触发下面的重排版分支，单独处理同步滚动 */
           if (scn->updated & SC_UPDATE_V_SCROLL)
             PreviewSyncScroll();
+
+          /* notepad2md：把光标行号/选区告诉输出面板，供 %LINE% %SEL% 使用 */
+          if (bShowOutput) {
+            int iCurPos  = (int)SendMessage(hwndEdit,SCI_GETCURRENTPOS,0,0);
+            int iSelFrom = (int)SendMessage(hwndEdit,SCI_GETSELECTIONSTART,0,0);
+            int iSelTo   = (int)SendMessage(hwndEdit,SCI_GETSELECTIONEND,0,0);
+            int iLine    = (int)SendMessage(hwndEdit,SCI_LINEFROMPOSITION,(WPARAM)iCurPos,0) + 1;
+            Output_SetEditorState(iLine,iSelFrom,iSelTo);
+            if (iSelTo > iSelFrom) {
+              WCHAR *pwch = LocalAlloc(LPTR,(iSelTo - iSelFrom + 1) * sizeof(WCHAR));
+              if (pwch) {
+                int n = (int)SendMessage(hwndEdit,SCI_GETSELTEXT,0,(LPARAM)pwch);
+                if (n > 0)
+                  Output_SetSelection(pwch);
+                else
+                  Output_SetSelection(L"");
+                LocalFree(pwch);
+              }
+            }
+            else
+              Output_SetSelection(L"");
+          }
 
           if (scn->updated & ~(SC_UPDATE_V_SCROLL | SC_UPDATE_H_SCROLL)) {
 
@@ -7082,6 +7121,7 @@ BOOL FileLoad(BOOL bDontSave,BOOL bNew,BOOL bReload,BOOL bNoEncDetect,LPCWSTR lp
 
   if (bNew) {
     lstrcpy(szCurFile,L"");
+    Output_SetCurrentFile(L"");
     SetDlgItemText(hwndMain,IDC_FILENAME,szCurFile);
     SetDlgItemInt(hwndMain,IDC_REUSELOCK,GetTickCount(),FALSE);
     if (!fKeepTitleExcerpt)
@@ -7235,6 +7275,9 @@ BOOL FileLoad(BOOL bDontSave,BOOL bNew,BOOL bReload,BOOL bNoEncDetect,LPCWSTR lp
   if (bShowOutline && IsWindow(hwndOutline))
     OutlineUpdate();
 
+  /* notepad2md：同步输出面板的 %FILE% 变量 */
+  Output_SetCurrentFile(szCurFile);
+
   return(fSuccess);
 }
 
@@ -7320,6 +7363,7 @@ BOOL FileSave(BOOL bSaveAlways,BOOL bAsk,BOOL bSaveAs,BOOL bSaveCopy)
         if (!bSaveCopy)
         {
           lstrcpy(szCurFile,tchFile);
+          Output_SetCurrentFile(szCurFile);
           SetDlgItemText(hwndMain,IDC_FILENAME,szCurFile);
           SetDlgItemInt(hwndMain,IDC_REUSELOCK,GetTickCount(),FALSE);
           if (!fKeepTitleExcerpt)

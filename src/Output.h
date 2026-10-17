@@ -44,9 +44,37 @@ HWND Output_Create(HWND hwndParent, HINSTANCE hinst);
 /*
   执行一条命令。异步返回：立即结束，输出通过面板显示。
 
-  wszCmd —— 命令行（宽字符，不含前导空格）；NULL 或空串则什么都不做
+  wszCmd —— 命令行（宽字符，不含前导空格）；NULL 或空串则什么都不做。
+             支持变量替换：
+               %FILE%  当前文件全路径
+               %DIR%   当前文件所在目录
+               %NAME%  文件名（不含扩展名）
+               %EXT%   扩展名（不含点，如 c）
+               %LINE%  光标所在行（1 based）
+               %SEL%   当前选中的文本
+               %%      百分号本身
+
+             路径含空格时请自己加引号，例如：
+               gcc -c "%FILE%" -o "%DIR%%NAME%.exe"
+             模块不做自动加引号 —— %DIR%%NAME%.o 这类跨变量写法
+             无法逐变量正确加引号，自动加反而制造更难查的错。
 */
 void Output_Run(const WCHAR *wszCmd);
+
+/*
+  主窗口在编辑器状态变化时调用，让 %LINE% / %SEL% 保持最新。
+*/
+void Output_SetEditorState(int iLine, int iSelStart, int iSelEnd);
+
+/*
+  主窗口在打开/新建文件时调用，设置 %FILE% / %DIR% / %NAME% / %EXT% 的值。
+
+  wszPath —— 文件全路径；空串表示尚未保存的新文档
+*/
+void Output_SetCurrentFile(const WCHAR *wszPath);
+
+/* 主窗口在选中文本变化时调用，设置 %SEL% */
+void Output_SetSelection(const WCHAR *wszText);
 
 /*
   请求中止当前运行的命令。若没有命令在跑则什么都不做。
