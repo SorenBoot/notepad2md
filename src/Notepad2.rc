@@ -258,6 +258,8 @@ BEGIN
     END
     POPUP "&View"
     BEGIN
+        MENUITEM "Markdown Pre&view\tCtrl+Alt+M", IDM_VIEW_MDPREVIEW
+        MENUITEM SEPARATOR
         MENUITEM "&Syntax Scheme...\tF12",      IDM_VIEW_SCHEME
         MENUITEM "&2nd Default Scheme\tShift+F12", IDM_VIEW_USE2NDDEFAULT
         MENUITEM "&Customize Schemes...\tCtrl+F12", IDM_VIEW_SCHEMECONFIG
@@ -284,8 +286,6 @@ BEGIN
         MENUITEM "Zoom &In\tCtrl++",            IDM_VIEW_ZOOMIN
         MENUITEM "Zoom &Out\tCtrl+-",           IDM_VIEW_ZOOMOUT
         MENUITEM "Reset &Zoom\tCtrl+/",         IDM_VIEW_RESETZOOM
-        MENUITEM SEPARATOR
-        MENUITEM "Markdown Pre&view\tCtrl+Alt+M", IDM_VIEW_MDPREVIEW
     END
     POPUP "&Settings"
     BEGIN
@@ -329,6 +329,9 @@ BEGIN
         MENUITEM "Sh&ow Toolbar",               IDM_VIEW_TOOLBAR
         MENUITEM "C&ustomize Toolbar...",       IDM_VIEW_CUSTOMIZETB
         MENUITEM "Sh&ow Statusbar",             IDM_VIEW_STATUSBAR
+        MENUITEM SEPARATOR
+        MENUITEM "&Register Explorer Context Menu", IDM_VIEW_REGCTX
+        MENUITEM "Un&register Explorer Context Menu", IDM_VIEW_UNREGCTX
         MENUITEM SEPARATOR
         MENUITEM "Save Settings On E&xit",      IDM_VIEW_SAVESETTINGS
         MENUITEM "Save Settings &Now\tF7",      IDM_VIEW_SAVESETTINGSNOW
@@ -1541,6 +1544,10 @@ BEGIN
     IDS_SAVEDSETTINGS       "The current program settings have been saved."
     IDS_CREATEINI_FAIL      "Error creating configuration file."
     IDS_WRITEINI_FAIL       "Error writing settings to configuration file."
+    IDS_CTXREG_OK           "notepad2md has been added to the Explorer context menu for the current user."
+    IDS_CTXREG_FAIL         "Could not register the Explorer context menu. Check your registry permissions."
+    IDS_CTXUNREG_OK         "notepad2md has been removed from the Explorer context menu."
+    IDS_CTXUNREG_FAIL       "Could not remove the Explorer context menu entry."
     IDS_SETTINGSNOTSAVED    "No existing configuration file was found.\nTo keep your style modifications, save settings now (F7) or go back to scheme configuration (Ctrl+F12) and export your styles."
     IDS_EXPORT_FAIL         "Error exporting style settings to ""%s""."
     IDS_PREVIEW_ERROR       "Failed to create the Markdown preview control."
@@ -2139,6 +2146,8 @@ BEGIN
     END
     POPUP "查看(&V)"
     BEGIN
+        MENUITEM "Markdown 预览(&V)\tCtrl+Alt+M", IDM_VIEW_MDPREVIEW
+        MENUITEM SEPARATOR
         MENUITEM "语法方案(&S)...\tF12",      IDM_VIEW_SCHEME
         MENUITEM "第二默认方案(&2)\tShift+F12", IDM_VIEW_USE2NDDEFAULT
         MENUITEM "自定义方案(&C)...\tCtrl+F12", IDM_VIEW_SCHEMECONFIG
@@ -2165,8 +2174,6 @@ BEGIN
         MENUITEM "放大(&I)\tCtrl++",            IDM_VIEW_ZOOMIN
         MENUITEM "缩小(&O)\tCtrl+-",           IDM_VIEW_ZOOMOUT
         MENUITEM "重置缩放(&Z)\tCtrl+/",         IDM_VIEW_RESETZOOM
-        MENUITEM SEPARATOR
-        MENUITEM "Markdown 预览(&V)\tCtrl+Alt+M", IDM_VIEW_MDPREVIEW
     END
     POPUP "设置(&S)"
     BEGIN
@@ -2210,6 +2217,9 @@ BEGIN
         MENUITEM "显示工具栏(&O)",               IDM_VIEW_TOOLBAR
         MENUITEM "自定义工具栏(&U)...",       IDM_VIEW_CUSTOMIZETB
         MENUITEM "显示状态栏(&O)",             IDM_VIEW_STATUSBAR
+        MENUITEM SEPARATOR
+        MENUITEM "注册到右键菜单(&R)",           IDM_VIEW_REGCTX
+        MENUITEM "从右键菜单移除(&N)",           IDM_VIEW_UNREGCTX
         MENUITEM SEPARATOR
         MENUITEM "退出时保存设置(&X)",      IDM_VIEW_SAVESETTINGS
         MENUITEM "立即保存设置(&N)\tF7",      IDM_VIEW_SAVESETTINGSNOW
@@ -3422,6 +3432,10 @@ BEGIN
     IDS_SAVEDSETTINGS       "当前程序设置已保存。"
     IDS_CREATEINI_FAIL      "创建配置文件时出错。"
     IDS_WRITEINI_FAIL       "将设置写入配置文件时出错。"
+    IDS_CTXREG_OK           "已将 notepad2md 添加到当前用户的资源管理器右键菜单。"
+    IDS_CTXREG_FAIL         "注册右键菜单失败，请检查注册表权限。"
+    IDS_CTXUNREG_OK         "已从右键菜单移除 notepad2md。"
+    IDS_CTXUNREG_FAIL       "移除右键菜单项失败。"
     IDS_SETTINGSNOTSAVED    "未找到现有配置文件。\n要保留您的样式修改，请立即保存设置 (F7)，或返回方案配置 (Ctrl+F12) 并导出您的样式。"
     IDS_EXPORT_FAIL         "导出样式设置到 ""%s""。"
     IDS_PREVIEW_ERROR       "无法创建 Markdown 预览控件。"

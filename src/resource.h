@@ -327,6 +327,8 @@
 #define IDM_VIEW_SAVESETTINGS           40443
 #define IDM_VIEW_SAVESETTINGSNOW        40444
 #define IDM_VIEW_MDPREVIEW              40445
+#define IDM_VIEW_REGCTX                  40446
+#define IDM_VIEW_UNREGCTX                40447
 #define IDM_HELP_ABOUT                  40500
 #define IDM_TRAY_RESTORE                40600
 #define IDM_TRAY_EXIT                   40601
@@ -404,6 +406,10 @@
 #define IDS_PREVIEW_COPIED              50045
 #define IDS_ABOUT_MODIFIEDFROM          50046
 #define IDS_ABOUT_MAINTAINER            50047
+#define IDS_CTXREG_OK                   50048
+#define IDS_CTXREG_FAIL                 50049
+#define IDS_CTXUNREG_OK                 50050
+#define IDS_CTXUNREG_FAIL               50051
 #define IDS_CMDLINEHELP                 60000
 
 // Next default values for new objects

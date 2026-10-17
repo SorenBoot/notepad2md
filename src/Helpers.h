@@ -233,5 +233,10 @@ VOID MinimizeWndToTray(HWND hWnd);
 VOID RestoreWndFromTray(HWND hWnd);
 
 
+//==== Explorer Context Menu (HKCU-only registration) - see Helpers.c =======
+BOOL RegisterExplorerContextMenu(LPCWSTR pszExe);
+BOOL UnregisterExplorerContextMenu(VOID);
+
+
 
 ///   End of Helpers.h   \\\

@@ -4367,6 +4367,31 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
       break;
 
 
+    case IDM_VIEW_REGCTX:
+      {
+        WCHAR tchExeFile[MAX_PATH];
+        GetModuleFileName(NULL,tchExeFile,COUNTOF(tchExeFile));
+        if (RegisterExplorerContextMenu(tchExeFile)) {
+          /* 让资源管理器立刻看到新菜单项 */
+          SHChangeNotify(SHCNE_ASSOCCHANGED,SHCNF_DWORD,NULL,NULL);
+          MsgBox(MBINFO,IDS_CTXREG_OK);
+        }
+        else
+          MsgBox(MBWARN,IDS_CTXREG_FAIL);
+      }
+      break;
+
+
+    case IDM_VIEW_UNREGCTX:
+      if (UnregisterExplorerContextMenu()) {
+        SHChangeNotify(SHCNE_ASSOCCHANGED,SHCNF_DWORD,NULL,NULL);
+        MsgBox(MBINFO,IDS_CTXUNREG_OK);
+      }
+      else
+        MsgBox(MBWARN,IDS_CTXUNREG_FAIL);
+      break;
+
+
     case IDM_HELP_ABOUT:
       ThemedDialogBox(g_hInstance,MAKEINTRESOURCE(IDD_ABOUT),
         hwnd,AboutDlgProc);

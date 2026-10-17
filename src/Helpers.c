@@ -2387,5 +2387,142 @@ VOID RestoreWndFromTray(HWND hWnd)
 }
 
 
+//=============================================================================
+//
+//  RegisterExplorerContextMenu() / UnregisterExplorerContextMenu()
+//
+//  把 notepad2md 注册到资源管理器右键菜单 / 从中移除。
+//
+//  只写 HKCU（当前用户），不碰 HKLM，因此不需要管理员权限，也不影响其他用户。
+//  写入位置（Notepad2 的传统键名，沿用以便与上游共存）：
+//
+//    HKCU\Software\Classes\*\shell\Notepad2                Open with notepad2md
+//    HKCU\Software\Classes\*\shell\Notepad2\command        "<exe> "%1""
+//    HKCU\Software\Classes\Notepad2.md\ShellNew            .md 文件右键「新建」
+//
+//  卸载/移除时必须把这些键整棵删掉，不留孤儿键。
+//
+//=============================================================================
+
+
+//  建一棵「HKCR\*\shell\Notepad2」并把 command 指向 pszExe。
+//  返回 FALSE 表示写注册表失败（调用方应提示用户）。
+static BOOL SetCtxKey(HKEY hRoot,LPCWSTR pszSubKey,LPCWSTR pszValueName,
+                      LPCWSTR pszData)
+{
+  HKEY hKey;
+  LONG lRet;
+
+  lRet = RegCreateKeyEx(hRoot,pszSubKey,0,NULL,
+                        REG_OPTION_NON_VOLATILE,KEY_WRITE,NULL,&hKey,NULL);
+  if (lRet != ERROR_SUCCESS)
+    return FALSE;
+
+  lRet = RegSetValueEx(hKey,pszValueName,0,REG_SZ,
+                       (CONST BYTE*)pszData,
+                       (DWORD)((lstrlen(pszData)+1)*sizeof(WCHAR)));
+  RegCloseKey(hKey);
+
+  return (lRet == ERROR_SUCCESS);
+}
+
+
+BOOL RegisterExplorerContextMenu(LPCWSTR pszExe)
+{
+  WCHAR wszCmd[MAX_PATH+8];
+  WCHAR wszKey[64];
+
+  if (!pszExe || !lstrlen(pszExe))
+    return FALSE;
+
+  /* 命令行："<exe> "%1"" —— 文件名为空时资源管理器不会显示该项 */
+  lstrcpy(wszCmd,L"\"");
+  lstrcat(wszCmd,pszExe);
+  lstrcat(wszCmd,L"\" \"%1\"");
+
+  /* 所有文件的右键项 */
+  if (!SetCtxKey(HKEY_CURRENT_USER,L"Software\\Classes\\*\\shell\\Notepad2",
+                 NULL,L"Open with notepad2md"))
+    return FALSE;
+  if (!SetCtxKey(HKEY_CURRENT_USER,L"Software\\Classes\\*\\shell\\Notepad2",
+                 L"Icon",pszExe))
+    return FALSE;
+  if (!SetCtxKey(HKEY_CURRENT_USER,L"Software\\Classes\\*\\shell\\Notepad2\\command",
+                 NULL,wszCmd))
+    return FALSE;
+
+  /* .md 文件类型关联（让「打开方式」里也能出现 notepad2md）*/
+  if (!SetCtxKey(HKEY_CURRENT_USER,L"Software\\Classes\\.md",NULL,L"Notepad2.md"))
+    return FALSE;
+  lstrcpy(wszKey,L"Software\\Classes\\Notepad2.md\\ShellNew");
+  if (!SetCtxKey(HKEY_CURRENT_USER,wszKey,L"NullFile",L""))
+    return FALSE;
+
+  return TRUE;
+}
+
+
+//  SHDeleteKey 从 Vista 起才有，这里用老接口兼容 Win7
+static LONG DeleteKeyRecursive(HKEY hKey,LPCWSTR pszSubKey)
+{
+  HKEY hChild;
+  LONG lRet;
+
+  lRet = RegOpenKeyEx(hKey,pszSubKey,0,KEY_ENUMERATE_SUB_KEYS|DELETE,&hChild);
+  if (lRet != ERROR_SUCCESS)
+    return lRet;
+
+  /* 先删干净子键 */
+  for (;;) {
+    WCHAR wszName[256];
+    DWORD cchName = COUNTOF(wszName);
+    lRet = RegEnumKeyEx(hChild,0,wszName,&cchName,NULL,NULL,NULL,NULL);
+    if (lRet != ERROR_SUCCESS)
+      break;
+    lRet = DeleteKeyRecursive(hChild,wszName);
+    if (lRet != ERROR_SUCCESS)
+      break;
+  }
+  RegCloseKey(hChild);
+
+  if (lRet != ERROR_NO_MORE_ITEMS && lRet != ERROR_SUCCESS)
+    return lRet;
+
+  return RegDeleteKey(hKey,pszSubKey);
+}
+
+
+BOOL UnregisterExplorerContextMenu(void)
+{
+  LONG l1,l2;
+
+  /* 删右键项；.md 关联键也一并删掉，但只在下面这个键是我们自己建的情况下 */
+  l1 = DeleteKeyRecursive(HKEY_CURRENT_USER,
+                          L"Software\\Classes\\*\\shell\\Notepad2");
+  l2 = DeleteKeyRecursive(HKEY_CURRENT_USER,
+                          L"Software\\Classes\\Notepad2.md\\ShellNew");
+
+  /* .md 的默认值键（Notepad2.md）—— 只删值，不删 .md 键本身，
+     避免影响其他程序对 .md 的注册 */
+  {
+    HKEY hKey;
+    /* 需要同时具备读取与写值权限，否则 RegQueryValueEx 会返回 ACCESS_DENIED */
+    if (RegOpenKeyEx(HKEY_CURRENT_USER,L"Software\\Classes\\.md",0,
+                     KEY_QUERY_VALUE|KEY_SET_VALUE,&hKey) == ERROR_SUCCESS) {
+      WCHAR wszCur[64];
+      DWORD cb = sizeof(wszCur);
+      DWORD dwType = 0;
+      if (RegQueryValueEx(hKey,NULL,NULL,&dwType,(LPBYTE)wszCur,&cb) == ERROR_SUCCESS &&
+          dwType == REG_SZ && !lstrcmpi(wszCur,L"Notepad2.md"))
+        RegDeleteValue(hKey,NULL);
+      RegCloseKey(hKey);
+    }
+  }
+
+  /* 本来就没有时也算成功 */
+  return ((l1 == ERROR_SUCCESS || l1 == ERROR_FILE_NOT_FOUND) &&
+          (l2 == ERROR_SUCCESS || l2 == ERROR_FILE_NOT_FOUND));
+}
+
 
 ///   End of Helpers.c   \\\
