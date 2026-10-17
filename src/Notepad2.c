@@ -38,6 +38,7 @@
 #include "Markdown.h"
 #include "Preview.h"
 #include "Outline.h"
+#include "Output.h"
 
 
 
@@ -165,8 +166,10 @@ BOOL      bShowStatusbar;
 /* notepad2md：实时 Markdown 预览 */
 HWND      hwndPreview = NULL;      /* MSHTML 预览窗格（隐藏时不显示） */
 HWND      hwndOutline = NULL;      /* 大纲面板 */
+HWND      hwndOutput = NULL;       /* 命令输出面板 */
 BOOL      bShowPreview = FALSE;    /* 预览是否可见 */
 BOOL      bShowOutline = FALSE;    /* 大纲面板是否可见 */
+BOOL      bShowOutput = FALSE;     /* 命令输出面板是否可见 */
 BOOL      bPreviewInited = FALSE;  /* 预览模块是否初始化成功 */
 BOOL      bPreviewDocLoaded = FALSE; /* CSS 外壳文档是否已灌入控件 */
 HWND      hwndSplitBar = NULL;     /* 编辑区/预览之间的分隔条 */
@@ -795,6 +798,10 @@ HWND InitInstance(HINSTANCE hInstance,LPSTR pszCmdLine,int nCmdShow)
   if (bShowOutline)
     OutlineToggle(TRUE);
 
+  /* notepad2md：恢复命令输出面板开关状态 */
+  if (bShowOutput)
+    OutputToggle(TRUE);
+
   return(hwndMain);
 
 }
@@ -858,6 +865,11 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
         if (IsWindow(hwndOutline))
           DestroyWindow(hwndOutline);
         hwndOutline = NULL;
+
+        // notepad2md: release output panel
+        if (IsWindow(hwndOutput))
+          DestroyWindow(hwndOutput);
+        hwndOutput = NULL;
 
         // GetWindowPlacement
         wndpl.length = sizeof(WINDOWPLACEMENT);
@@ -1952,6 +1964,9 @@ static void PreviewSyncScroll(void)
 /* 大纲面板固定宽度（窗口足够窄时 MsgSize() 会压缩它） */
 #define OUTLINE_PANEL_WIDTH 220
 
+/* 命令输出面板固定高度（窗口足够矮时 MsgSize() 会压缩它） */
+#define OUTPUT_PANEL_HEIGHT 160
+
 /* 把千分比换算成编辑区像素宽，并保证两栏都至少 MIN 像素 */
 static int PreviewSplitCalcLeft(int cx)
 {
@@ -2321,6 +2336,46 @@ void OutlineToggle( BOOL bShow )
 }
 
 
+/*
+  切换命令输出面板（编辑器底部横条）。
+*/
+void OutputToggle( BOOL bShow )
+{
+  RECT rc;
+
+  if (bShow == bShowOutput && !(bShow && !IsWindow(hwndOutput)))
+    return;
+
+  if (bShow) {
+    if (!IsWindow(hwndOutput)) {
+      if (!Output_Init(g_hInstance))
+        return;
+      hwndOutput = Output_Create(hwndMain,g_hInstance);
+      if (!hwndOutput) {
+        MsgBox(MBWARN,IDS_PREVIEW_ERROR);
+        bShowOutput = FALSE;
+        return;
+      }
+    }
+    ShowWindow(hwndOutput,SW_SHOW);
+  }
+  else {
+    if (IsWindow(hwndOutput))
+      ShowWindow(hwndOutput,SW_HIDE);
+  }
+
+  /* 先置位再布局，MsgSize 里要靠这个标志决定是否给输出面板留位置 */
+  bShowOutput = bShow;
+
+  CheckCmd(GetMenu(hwndMain),IDM_VIEW_OUTPUT,bShowOutput);
+
+  IniSetInt(L"Settings2",L"ShowOutput",bShowOutput);
+
+  GetClientRect(hwndMain,&rc);
+  MsgSize(hwndMain,SIZE_RESTORED,MAKELONG(rc.right,rc.bottom));
+}
+
+
 void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
 {
 
@@ -2366,7 +2421,21 @@ void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
     cy -= (rc.bottom - rc.top);
   }
 
-  hdwp = BeginDeferWindowPos(5);
+  hdwp = BeginDeferWindowPos(6);
+
+  /* 命令输出面板：占客户区底部，高度固定；窗口太矮时压缩 */
+  if (bShowOutput && IsWindow(hwndOutput))
+  {
+    int cyOutput = OUTPUT_PANEL_HEIGHT;
+    if (cyOutput > cy / 2)
+      cyOutput = cy / 2;
+    if (cyOutput < 60)
+      cyOutput = 60;
+
+    DeferWindowPos(hdwp,hwndOutput,NULL,x,y + cy - cyOutput,cx,cyOutput,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+    cy -= cyOutput;
+  }
 
   /* 大纲面板：固定在编辑区左侧，不参与编辑/预览的分栏计算。
      宽度固定 OUTLINE_PANEL_WIDTH；窗口太窄时压缩，避免挤爆编辑区。 */
@@ -2589,6 +2658,7 @@ void MsgInitMenu(HWND hwnd,WPARAM wParam,LPARAM lParam)
   CheckCmd(hmenu,IDM_VIEW_WORDWRAP,fWordWrap);
   CheckCmd(hmenu,IDM_VIEW_MDPREVIEW,bShowPreview);
   CheckCmd(hmenu,IDM_VIEW_OUTLINE,bShowOutline);
+  CheckCmd(hmenu,IDM_VIEW_OUTPUT,bShowOutput);
   CheckCmd(hmenu,IDM_VIEW_LONGLINEMARKER,bMarkLongLines);
   CheckCmd(hmenu,IDM_VIEW_TABSASSPACES,bTabsAsSpaces);
   CheckCmd(hmenu,IDM_VIEW_SHOWINDENTGUIDES,bShowIndentGuides);
@@ -2616,6 +2686,8 @@ void MsgInitMenu(HWND hwnd,WPARAM wParam,LPARAM lParam)
   CheckCmd(hmenu,IDM_VIEW_STICKYWINPOS,bStickyWinPos);
   /* notepad2md：大纲面板开关（缺省关闭，与预览一致） */
   bShowOutline = IniGetInt(L"Settings2",L"ShowOutline",0);
+  /* notepad2md：命令输出面板开关（缺省关闭） */
+  bShowOutput = IniGetInt(L"Settings2",L"ShowOutput",0);
   CheckCmd(hmenu,IDM_VIEW_ALWAYSONTOP,((bAlwaysOnTop || flagAlwaysOnTop == 2) && flagAlwaysOnTop != 1));
   CheckCmd(hmenu,IDM_VIEW_MINTOTRAY,bMinimizeToTray);
   CheckCmd(hmenu,IDM_VIEW_TRANSPARENT,bTransparentMode && bTransparentModeAvailable);
@@ -4359,6 +4431,44 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
 
     case IDM_VIEW_OUTLINE:
       OutlineToggle(!bShowOutline);
+      break;
+
+
+    case IDM_VIEW_OUTPUT:
+      OutputToggle(!bShowOutput);
+      break;
+
+
+    case IDM_OUTPUT_GOTOLINE:
+      {
+        /* 输出面板里双击了一行：lParam 是输出框中的行索引。
+           输出模块已把该行识别为「文件:行号」，此处按行号定位编辑器。 */
+        int iLineIdx = (int)lParam;
+        WCHAR wszFile[MAX_PATH];
+        int iLine;
+
+        if (Output_GetGotoTarget(iLineIdx,wszFile,COUNTOF(wszFile),&iLine) &&
+            iLine > 0) {
+          /* 目标不是当前文件时先打开它（路径相对于 exe 所在目录解析） */
+          if (lstrcmpi(wszFile,szCurFile) != 0) {
+            WCHAR wszFull[MAX_PATH];
+            if (PathIsRelative(wszFile)) {
+              lstrcpy(wszFull,g_wchWorkingDirectory);
+              lstrcat(wszFull,L"\\");
+              lstrcat(wszFull,wszFile);
+            }
+            else
+              lstrcpyn(wszFull,wszFile,COUNTOF(wszFull));
+            if (PathFileExists(wszFull))
+              FileLoad(TRUE,FALSE,FALSE,FALSE,wszFull);
+          }
+          {
+            int iPos = (int)SendMessage(hwndEdit,SCI_POSITIONFROMLINE,iLine - 1,0);
+            SendMessage(hwndEdit,SCI_GOTOPOS,iPos,0);
+            SendMessage(hwndEdit,SCI_SETFOCUS,0,0);
+          }
+        }
+      }
       break;
 
 

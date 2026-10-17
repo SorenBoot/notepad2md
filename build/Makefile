@@ -112,6 +112,7 @@ MD_SRC := \
 	../src/Markdown.c \
 	../src/Preview.c \
 	../src/Outline.c \
+	../src/Output.c \
 	../md4c/md4c.c
 
 C_OBJ   := $(N2_C_SRC:.c=.o) $(MD_SRC:.c=.o)

@@ -139,6 +139,9 @@ void PreviewToggle(BOOL bShow);
 void OutlineUpdate(void);
 void OutlineToggle(BOOL bShow);
 
+/* notepad2md 命令输出面板 */
+void OutputToggle(BOOL bShow);
+
 
 BOOL FileIO(BOOL,LPCWSTR,BOOL,int*,int*,BOOL*,BOOL*,BOOL*,BOOL);
 BOOL FileLoad(BOOL,BOOL,BOOL,BOOL,LPCWSTR);
