@@ -37,6 +37,7 @@
 #include "resource.h"
 #include "Markdown.h"
 #include "Preview.h"
+#include "Outline.h"
 
 
 
@@ -163,7 +164,9 @@ BOOL      bShowStatusbar;
 
 /* notepad2md：实时 Markdown 预览 */
 HWND      hwndPreview = NULL;      /* MSHTML 预览窗格（隐藏时不显示） */
+HWND      hwndOutline = NULL;      /* 大纲面板 */
 BOOL      bShowPreview = FALSE;    /* 预览是否可见 */
+BOOL      bShowOutline = FALSE;    /* 大纲面板是否可见 */
 BOOL      bPreviewInited = FALSE;  /* 预览模块是否初始化成功 */
 BOOL      bPreviewDocLoaded = FALSE; /* CSS 外壳文档是否已灌入控件 */
 HWND      hwndSplitBar = NULL;     /* 编辑区/预览之间的分隔条 */
@@ -788,6 +791,10 @@ HWND InitInstance(HINSTANCE hInstance,LPSTR pszCmdLine,int nCmdShow)
   if (bShowPreview)
     PreviewToggle(TRUE);
 
+  /* notepad2md：恢复大纲面板开关状态 */
+  if (bShowOutline)
+    OutlineToggle(TRUE);
+
   return(hwndMain);
 
 }
@@ -846,6 +853,11 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
           Preview_Shutdown();
           bPreviewInited = FALSE;
         }
+
+        // notepad2md: release outline panel
+        if (IsWindow(hwndOutline))
+          DestroyWindow(hwndOutline);
+        hwndOutline = NULL;
 
         // GetWindowPlacement
         wndpl.length = sizeof(WINDOWPLACEMENT);
@@ -939,8 +951,12 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
     //  break;
 
     case WM_TIMER:
-      if (wParam == ID_PREVIEWTIMER)
-        PreviewUpdate();
+      if (wParam == ID_PREVIEWTIMER) {
+        if (bShowPreview && IsWindow(hwndPreview))
+          PreviewUpdate();
+        if (bShowOutline && IsWindow(hwndOutline))
+          OutlineUpdate();
+      }
       break;
 
 
@@ -1933,6 +1949,9 @@ static void PreviewSyncScroll(void)
 
 #define PREVIEW_SPLITTER_WIDTH 6
 
+/* 大纲面板固定宽度（窗口足够窄时 MsgSize() 会压缩它） */
+#define OUTLINE_PANEL_WIDTH 220
+
 /* 把千分比换算成编辑区像素宽，并保证两栏都至少 MIN 像素 */
 static int PreviewSplitCalcLeft(int cx)
 {
@@ -2152,6 +2171,53 @@ void PreviewUpdate( void )
     LocalFree(pszCopied);
 }
 
+
+/*
+  用当前编辑器内容重建大纲。
+
+  与 PreviewUpdate 一样要把编辑区文本转成 UTF-8 —— 大纲里的标题文字
+  直接从 Markdown 文本截取，不转码中文会变乱码。
+*/
+void OutlineUpdate( void )
+{
+  int iLen;
+  int iCodePage;
+  char *pchText;
+  char *pchUtf8 = NULL;
+
+  if (!bShowOutline || !IsWindow(hwndOutline))
+    return;
+
+  iLen = (int)SendMessage(hwndEdit,SCI_GETLENGTH,0,0);
+  iCodePage = (int)SendMessage(hwndEdit,SCI_GETCODEPAGE,0,0);
+
+  pchText = LocalAlloc(LPTR,iLen + 1);
+  if (!pchText)
+    return;
+
+  if (iLen > 0)
+    SendMessage(hwndEdit,SCI_GETTEXT,(WPARAM)(iLen + 1),(LPARAM)pchText);
+  else
+    pchText[0] = '\0';
+
+  /* 非 UTF-8 的编辑区（例如按 GBK 打开的文档）先转宽字符再转 UTF-8 */
+  if (iCodePage != SC_CP_UTF8) {
+    WCHAR *pwch = LocalAlloc(LPTR,(iLen + 1) * sizeof(WCHAR));
+    if (pwch) {
+      MultiByteToWideChar(iCodePage,0,pchText,-1,pwch,iLen + 1);
+      pchUtf8 = Utf8FromWideStr(pwch);
+      LocalFree(pwch);
+    }
+  }
+
+  Outline_Update(hwndOutline,pchUtf8 ? pchUtf8 : pchText);
+
+  LocalFree(pchText);
+  if (pchUtf8)
+    LocalFree(pchUtf8);
+}
+
+
 /*
   切换预览面。首次显示时才创建控件（省内存）。
 */
@@ -2207,6 +2273,54 @@ void PreviewToggle( BOOL bShow )
 }
 
 
+/*
+  切换大纲面板。
+
+  与预览不同，大纲内容始终跟随编辑器文本（见 OutlineUpdate），
+  所以这里只负责创建/显隐，不维护独立的 inited 标志。
+*/
+void OutlineToggle( BOOL bShow )
+{
+  RECT rc;
+
+  if (bShow == bShowOutline && !(bShow && !IsWindow(hwndOutline)))
+    return;
+
+  if (bShow) {
+    if (!IsWindow(hwndOutline)) {
+      if (!Outline_Init(g_hInstance))
+        return;
+      hwndOutline = Outline_Create(hwndMain,g_hInstance);
+      if (!hwndOutline) {
+        /* 复用预览的错误串：同属 Markdown 功能，文案通用 */
+        MsgBox(MBWARN,IDS_PREVIEW_ERROR);
+        bShowOutline = FALSE;
+        return;
+      }
+    }
+    ShowWindow(hwndOutline,SW_SHOW);
+  }
+  else {
+    if (IsWindow(hwndOutline))
+      ShowWindow(hwndOutline,SW_HIDE);
+  }
+
+  /* 先置位再刷新：OutlineUpdate() 内部会检查 bShowOutline */
+  bShowOutline = bShow;
+
+  CheckCmd(GetMenu(hwndMain),IDM_VIEW_OUTLINE,bShowOutline);
+
+  /* 立即写 ini，与 ReuseWindow 等同风格 */
+  IniSetInt(L"Settings2",L"ShowOutline",bShowOutline);
+
+  if (bShowOutline)
+    OutlineUpdate();
+
+  GetClientRect(hwndMain,&rc);
+  MsgSize(hwndMain,SIZE_RESTORED,MAKELONG(rc.right,rc.bottom));
+}
+
+
 void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
 {
 
@@ -2252,7 +2366,24 @@ void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
     cy -= (rc.bottom - rc.top);
   }
 
-  hdwp = BeginDeferWindowPos(4);
+  hdwp = BeginDeferWindowPos(5);
+
+  /* 大纲面板：固定在编辑区左侧，不参与编辑/预览的分栏计算。
+     宽度固定 OUTLINE_PANEL_WIDTH；窗口太窄时压缩，避免挤爆编辑区。 */
+  if (bShowOutline && IsWindow(hwndOutline))
+  {
+    int cxOutline = OUTLINE_PANEL_WIDTH;
+    if (cxOutline > cx / 3)
+      cxOutline = cx / 3;
+    if (cxOutline < 80)
+      cxOutline = 80;
+
+    DeferWindowPos(hdwp,hwndOutline,NULL,x,y,cxOutline,cy,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+
+    x  += cxOutline;
+    cx -= cxOutline;
+  }
 
   if (bShowPreview && IsWindow(hwndPreview))
   {
@@ -2457,6 +2588,7 @@ void MsgInitMenu(HWND hwnd,WPARAM wParam,LPARAM lParam)
 
   CheckCmd(hmenu,IDM_VIEW_WORDWRAP,fWordWrap);
   CheckCmd(hmenu,IDM_VIEW_MDPREVIEW,bShowPreview);
+  CheckCmd(hmenu,IDM_VIEW_OUTLINE,bShowOutline);
   CheckCmd(hmenu,IDM_VIEW_LONGLINEMARKER,bMarkLongLines);
   CheckCmd(hmenu,IDM_VIEW_TABSASSPACES,bTabsAsSpaces);
   CheckCmd(hmenu,IDM_VIEW_SHOWINDENTGUIDES,bShowIndentGuides);
@@ -2482,6 +2614,8 @@ void MsgInitMenu(HWND hwnd,WPARAM wParam,LPARAM lParam)
   CheckCmd(hmenu,IDM_VIEW_SINGLEFILEINSTANCE,i);
   bStickyWinPos = IniGetInt(L"Settings2",L"StickyWindowPosition",0);
   CheckCmd(hmenu,IDM_VIEW_STICKYWINPOS,bStickyWinPos);
+  /* notepad2md：大纲面板开关（缺省关闭，与预览一致） */
+  bShowOutline = IniGetInt(L"Settings2",L"ShowOutline",0);
   CheckCmd(hmenu,IDM_VIEW_ALWAYSONTOP,((bAlwaysOnTop || flagAlwaysOnTop == 2) && flagAlwaysOnTop != 1));
   CheckCmd(hmenu,IDM_VIEW_MINTOTRAY,bMinimizeToTray);
   CheckCmd(hmenu,IDM_VIEW_TRANSPARENT,bTransparentMode && bTransparentModeAvailable);
@@ -4222,6 +4356,25 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
       PreviewToggle(!bShowPreview);
       break;
 
+
+    case IDM_VIEW_OUTLINE:
+      OutlineToggle(!bShowOutline);
+      break;
+
+
+    case IDM_OUTLINE_GOTO:
+      {
+        /* 大纲项被双击：lParam 是列表索引（Outline.c 发来的） */
+        int idx = (int)lParam;
+        int iLine = Outline_GetLine(hwndOutline,idx);
+        if (iLine >= 0) {
+          int iPos = (int)SendMessage(hwndEdit,SCI_POSITIONFROMLINE,iLine,0);
+          SendMessage(hwndEdit,SCI_GOTOPOS,iPos,0);
+          SendMessage(hwndEdit,SCI_SETFOCUS,0,0);
+        }
+      }
+      break;
+
     case IDM_VIEW_ALWAYSONTOP:
       if ((bAlwaysOnTop || flagAlwaysOnTop == 2) && flagAlwaysOnTop != 1) {
         bAlwaysOnTop = 0;
@@ -5328,7 +5481,8 @@ LRESULT MsgNotify(HWND hwnd,WPARAM wParam,LPARAM lParam)
         case SCN_MODIFIED:
         case SCN_ZOOM:
           UpdateLineNumberWidth();
-          if (bShowPreview)
+          /* 预览或大纲任一可见就排一次更新，timer 里分别判断 */
+          if (bShowPreview || bShowOutline)
             SetTimer(hwnd,ID_PREVIEWTIMER,120,NULL);
           break;
 
@@ -6966,6 +7120,10 @@ BOOL FileLoad(BOOL bDontSave,BOOL bNew,BOOL bReload,BOOL bNoEncDetect,LPCWSTR lp
 
   else if (!bFileTooBig)
     MsgBox(MBWARN,IDS_ERR_LOADFILE,szFileName);
+
+  /* notepad2md：文件内容已就位，同步大纲面板 */
+  if (bShowOutline && IsWindow(hwndOutline))
+    OutlineUpdate();
 
   return(fSuccess);
 }

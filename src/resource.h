@@ -329,6 +329,8 @@
 #define IDM_VIEW_MDPREVIEW              40445
 #define IDM_VIEW_REGCTX                  40446
 #define IDM_VIEW_UNREGCTX                40447
+#define IDM_VIEW_OUTLINE                 40448
+#define IDM_OUTLINE_GOTO                 40449
 #define IDM_HELP_ABOUT                  40500
 #define IDM_TRAY_RESTORE                40600
 #define IDM_TRAY_EXIT                   40601

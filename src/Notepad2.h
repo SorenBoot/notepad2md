@@ -135,6 +135,10 @@ void UpdateLineNumberWidth();
 void PreviewUpdate(void);
 void PreviewToggle(BOOL bShow);
 
+/* notepad2md 大纲面板 */
+void OutlineUpdate(void);
+void OutlineToggle(BOOL bShow);
+
 
 BOOL FileIO(BOOL,LPCWSTR,BOOL,int*,int*,BOOL*,BOOL*,BOOL*,BOOL);
 BOOL FileLoad(BOOL,BOOL,BOOL,BOOL,LPCWSTR);
