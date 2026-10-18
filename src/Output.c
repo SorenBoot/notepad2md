@@ -5,17 +5,19 @@
   设计取舍（刻意为之，不是偷懒）：
     - stdin 重定向到 NUL：交互式程序（ssh、python REPL）不会挂死，
       它们会因为读不到输入而退出，或自行弹出自己的控制台窗口。
-    - 不解析 ANSI 转义：纯文本显示，颜色丢失但内容不丢。
-    - 不做终端模拟器：Windows 上嵌 conhost 不可靠，ConPTY 在 Win7 不存在，
-      这里只是一个「CreateProcess + 匿名管道」的读取器。
-    - 因此本面板不是终机的替代品，只服务于
-      「跑个命令看结果、顺着错误行回去改代码」这个编辑器场景。
+    - 输出控件用 RichEdit（MSFTEDIT_CLASS），解析 ANSI 颜色转义，
+      把 gcc / git / ls 的颜色还原出来。深色底是刻意的：
+      亮黄、亮青这些色在浅色底上根本看不清。
+    - 不是终端模拟器：不支持光标定位、全屏程序、交互输入。
+      只服务于「跑个命令看结果、顺着错误行回去改代码」这个编辑器场景。
   ===========================================================================*/
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
+#include <richedit.h>
 #include <stdio.h>
 #include <string.h>
+#include <wchar.h>
 #include <strsafe.h>
 #include <shlwapi.h>
 #include "scintilla.h"
@@ -47,7 +49,6 @@ static HWND      g_hwndOwner = NULL;
 static WNDPROC   g_pfnEditProc = NULL;   /* 输出框原过程，子类化用 */
 static WNDPROC   g_pfnComboProc = NULL;  /* 命令框原过程，子类化用 */
 static HWND      g_hwndStatus = NULL;    /* 顶部信息条 */
-static HWND      g_hwndDir = NULL;       /* 工作目录输入框 */
 static HFONT     g_hFontMono = NULL;     /* 输出区等宽字体 */
 static HANDLE    g_hReadThread = NULL;
 static HANDLE    g_hProc       = NULL;
@@ -65,7 +66,7 @@ static LINEINFO g_aLines[OUTPUT_MAX_LINES];
 static int      g_nLines = 0;
 
 /* 后面才定义的几个接口，这里前置声明，供上面的窗口过程使用 */
-void Output_SetWorkDir(const WCHAR *wszPath);
+static const WCHAR *CurFileName(void);
 void Output_RefreshStatus(void);
 
 /* ---------------------------------------------------------------------------
@@ -224,30 +225,255 @@ static void PostAppend(const WCHAR *wszText, BOOL bNewLine)
 }
 /* 主线程里真正把文字写进 EDIT，并顺带登记这一行 */
 static void HistoryAdd(const WCHAR *wszCmd);
-static void DoAppend(const WCHAR *wszText, BOOL bNewLine)
+
+/* ---------------------------------------------------------------------------
+   颜色
+
+   输出区是 RichEdit，可以逐段上色。取 VS 深色主题那套，配深色底。
+   为什么必须深色底：ANSI 的亮黄、亮青、亮绿是按深色终端调的，
+   放到浅色底上对比度极低，白字加黄等于看不见。
+--------------------------------------------------------------------------- */
+#define OUT_BG        RGB(0x1E,0x1E,0x1E)   /* 底色 */
+#define OUT_FG        RGB(0xD4,0xD4,0xD4)   /* 默认前景 */
+#define OUT_COLOR_CMD RGB(0x4E,0xC9,0xB0)   /* 命令行本身 */
+#define OUT_COLOR_DIM RGB(0x80,0x80,0x80)   /* 分隔线、退出码 */
+
+/* ANSI 16 色 → RGB（xterm 默认调色板） */
+static const COLORREF g_aAnsi[16] = {
+  RGB(0x00,0x00,0x00), RGB(0xCD,0x31,0x31), RGB(0x0D,0xBC,0x79), RGB(0xE5,0xE5,0x10),
+  RGB(0x24,0x72,0xC8), RGB(0xBC,0x3F,0xBC), RGB(0x11,0xA8,0xCD), RGB(0xE5,0xE5,0xE5),
+  RGB(0x66,0x66,0x66), RGB(0xF1,0x4C,0x4C), RGB(0x23,0xD1,0x8B), RGB(0xF5,0xF5,0x43),
+  RGB(0x3B,0x8E,0xEA), RGB(0xD6,0x70,0xD6), RGB(0x29,0xB8,0xDB), RGB(0xFF,0xFF,0xFF)
+};
+
+/* 解析 SGR 参数串（ESC[...m 里 [...] 那一段），更新前景色/粗体。
+   只处理最常用的：0 重置、1 粗体、22 取消粗体、30-37/90-97 前景色、
+   39 默认前景。背景色 40-47 也收下 —— 否则某些工具用背景高亮标错行，
+   我们不认就会把整段渲染成怪色。 */
+static void ApplySgr(const WCHAR *wszParams, COLORREF *pFg, BOOL *pbBold,
+                     COLORREF *pBg, BOOL *pbHasBg)
 {
-  int iLen;
-  int iLineIdx;
+  const WCHAR *p = wszParams;
+  if (!*p) {                     /* ESC[m == ESC[0m */
+    *pFg = OUT_FG; *pbBold = FALSE; *pbHasBg = FALSE;
+    return;
+  }
+  while (*p) {
+    int n = 0;
+    while (*p >= L'0' && *p <= L'9') { n = n * 10 + (*p - L'0'); p++; }
+    if (*p == L';') p++;
+
+    if (n == 0)       { *pFg = OUT_FG; *pbBold = FALSE; *pbHasBg = FALSE; }
+    else if (n == 1)    *pbBold = TRUE;
+    else if (n == 22)   *pbBold = FALSE;
+    else if (n == 39) { *pFg = OUT_FG; *pbBold = FALSE; }
+    else if (n == 49)   *pbHasBg = FALSE;
+    else if (n >= 30 && n <= 37)  { *pFg = g_aAnsi[n - 30];      *pbBold = FALSE; }
+    else if (n >= 90 && n <= 97)  { *pFg = g_aAnsi[n - 90 + 8];  *pbBold = FALSE; }
+    else if (n >= 40 && n <= 47)  { *pBg = g_aAnsi[n - 40];      *pbHasBg = TRUE; }
+    else if (n >= 100 && n <= 107){ *pBg = g_aAnsi[n - 100 + 8]; *pbHasBg = TRUE; }
+    /* 其它（下划线、闪烁、256 色扩展）一律忽略：不认识就不动色，
+       总比乱涂好 */
+    if (!*p) break;
+  }
+}
+
+/*
+  把一行带 ANSI 转义的文本写进 RichEdit，并逐段上色。
+
+  返回这一行去掉转义后的纯文本（供 RegisterLine 识别 file:line）——
+  调用方提供缓冲。纯文本必须和显示内容一致，否则双击跳转的行号会错位。
+*/
+static void AppendColored(const WCHAR *wszIn, BOOL bNewLine,
+                          WCHAR *wszPlain, int cchPlain)
+{
+  COLORREF fg = OUT_FG, bg = OUT_BG;
+  BOOL bBold = FALSE, bHasBg = FALSE;
+  int  nPlain = 0;
+  const WCHAR *p = wszIn;
+
+  if (cchPlain > 0) wszPlain[0] = L'\0';
+
+  /* 先把光标移到末尾，之后每段都用 EM_REPLACESEL 追加 */
+  {
+    int iLen = GetWindowTextLengthW(g_hwndEdit);
+    SendMessage(g_hwndEdit,EM_SETSEL,(WPARAM)iLen,(LPARAM)iLen);
+  }
+
+  while (*p) {
+    if (*p == 0x1B && p[1] == L'[') {
+      /* ESC [ ... m  —— 只认以 'm' 结尾的 SGR，其余（光标移动、清屏）
+         连同参数一起丢掉，不把控制码当文字显示 */
+      const WCHAR *q = p + 2;
+      WCHAR wszParams[64];
+      int   nParam = 0;
+      while (*q && *q != L'm' && *q != L';' && !(*q >= L'0' && *q <= L'9') &&
+             *q != L'?' && nParam < (int)COUNTOF(wszParams) - 1)
+        q++;
+      /* 收参数 */
+      {
+        const WCHAR *r = p + 2;
+        nParam = 0;
+        while (*r && *r != L'm' && nParam < (int)COUNTOF(wszParams) - 1) {
+          if ((*r >= L'0' && *r <= L'9') || *r == L';')
+            wszParams[nParam++] = *r;
+          else if (*r != L'?')
+            break;              /* 不是 SGR（比如 ESC[2J），别乱吃 */
+          r++;
+        }
+        wszParams[nParam] = L'\0';
+        if (*r == L'm') {
+          ApplySgr(wszParams,&fg,&bBold,&bg,&bHasBg);
+          p = r + 1;
+          continue;             /* 转义吃掉，不显示 */
+        }
+      }
+      /* 不是 SGR：整个转义序列跳过不显示，但不当成文字 */
+      {
+        const WCHAR *r = p + 1;
+        if (*r == L'[') {
+          r++;
+          while (*r && !((*r >= L'@' && *r <= L'~')))
+            r++;
+          if (*r) r++;
+          p = r;
+          continue;
+        }
+      }
+      /* 落单的 ESC：丢弃 */
+      p++;
+      continue;
+    }
+
+    /* 收集一段同色文字，一次写进去，避免逐字符发消息 */
+    {
+      WCHAR wszRun[1024];
+      int   nRun = 0;
+      while (*p && *p != 0x1B && nRun < (int)COUNTOF(wszRun) - 1) {
+        wszRun[nRun++] = *p;
+        if (nPlain < cchPlain - 1)
+          wszPlain[nPlain++] = *p;
+        p++;
+      }
+      wszRun[nRun] = L'\0';
+      if (nRun > 0) {
+        CHARFORMAT2W cf;
+        memset(&cf,0,sizeof(cf));
+        cf.cbSize = sizeof(cf);
+        cf.dwMask = CFM_COLOR | CFM_BOLD;
+        cf.crTextColor = fg;
+        cf.dwEffects   = bBold ? CFE_BOLD : 0;
+        SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&cf);
+        SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)wszRun);
+      }
+    }
+  }
+
+  if (bNewLine) {
+    CHARFORMAT2W cf;
+    memset(&cf,0,sizeof(cf));
+    cf.cbSize = sizeof(cf);
+    cf.dwMask = CFM_COLOR | CFM_BOLD;
+    cf.crTextColor = OUT_FG;
+    cf.dwEffects   = 0;
+    SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&cf);
+    SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)L"\r\n");
+  }
+
+  if (cchPlain > 0)
+    wszPlain[nPlain] = L'\0';
+}
+
+/*
+  bStyle：0 = 普通输出（按内容上色），1 = 命令行（青色），2 = 灰色（分隔线、退出码）
+*/
+static void DoAppendEx(const WCHAR *wszText, BOOL bNewLine, int iStyle)
+{
+  WCHAR wszPlain[2048];
+  int   iLen;
+  int   iLineIdx;
+
   if (!g_hwndEdit || !wszText)
     return;
 
   /* 超限时从头砍一半，防止无限增长 */
-  iLen = GetWindowTextLength(g_hwndEdit);
+  iLen = GetWindowTextLengthW(g_hwndEdit);
   if (iLen > OUTPUT_MAX_TEXT) {
     SendMessage(g_hwndEdit,EM_SETSEL,0,OUTPUT_MAX_TEXT / 2);
     SendMessage(g_hwndEdit,EM_REPLACESEL,TRUE,(LPARAM)L"");
-    iLen = GetWindowTextLength(g_hwndEdit);
+    iLen = GetWindowTextLengthW(g_hwndEdit);
   }
-  /* 本行索引：新文字总是追加在末尾。末尾字符所在行号 +1 ——
-     缓冲区以换行结尾时（每次都补 CRLF），末尾字符属于上一行，
-     新文字从下一行开始，所以要 +1。 */
+
+  /* 本行索引：写入前先把插入点定位到末尾并记下该位置，
+     写完后用这个位置反查行号。
+
+     不要用「末尾字符行号 +1」推算：RichEdit 的 EM_LINEFROMCHAR
+     对 CRLF 末尾和文末位置的处理与普通 EDIT 不一致，实测会偏一位，
+     双击跳转就跑到下一行去了。用固定位置反查才是准的。 */
   iLineIdx = 0;
-  if (iLen > 0)
-    iLineIdx = (int)SendMessage(g_hwndEdit,EM_LINEFROMCHAR,(WPARAM)(iLen - 1),0) + 1;
-  SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)wszText);
-  if (bNewLine)
-    SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)L"\r\n");
-  RegisterLine(iLineIdx,wszText);
+  {
+    int iEnd = GetWindowTextLengthW(g_hwndEdit);
+    SendMessage(g_hwndEdit,EM_SETSEL,(WPARAM)iEnd,(LPARAM)iEnd);
+    if (iEnd > 0)
+      iLineIdx = (int)SendMessage(g_hwndEdit,EM_LINEFROMCHAR,(WPARAM)iEnd,0);
+  }
+
+  if (iStyle == 0) {
+    AppendColored(wszText,bNewLine,wszPlain,COUNTOF(wszPlain));
+  }
+  else {
+    /* 命令行/分隔线：整行一个颜色。仍然过一遍 ANSI 剥离 ——
+       命令本身可能带转义（echo 给下游上色那种），
+       直接把 ESC 原字符画到控件里会变成豆腐块。 */
+    WCHAR wszStripped[2048];
+    const WCHAR *pSrc = wszText;
+    int nOut = 0;
+
+    while (*pSrc && nOut < (int)COUNTOF(wszStripped) - 1) {
+      if (*pSrc == 0x1B) {
+        /* 跳过整个转义序列 */
+        const WCHAR *r = pSrc + 1;
+        if (*r == L'[') {
+          r++;
+          while (*r && !(*r >= L'@' && *r <= L'~'))
+            r++;
+          if (*r) r++;
+        }
+        else if (*r) {
+          r++;
+        }
+        pSrc = r;
+        continue;
+      }
+      wszStripped[nOut++] = *pSrc++;
+    }
+    wszStripped[nOut] = L'\0';
+
+    {
+      CHARFORMAT2W cf;
+      memset(&cf,0,sizeof(cf));
+      cf.cbSize = sizeof(cf);
+      cf.dwMask = CFM_COLOR | CFM_BOLD;
+      cf.crTextColor = (iStyle == 1) ? OUT_COLOR_CMD : OUT_COLOR_DIM;
+      cf.dwEffects   = (iStyle == 1) ? CFE_BOLD : 0;
+      SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&cf);
+      SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)wszStripped);
+      if (bNewLine) {
+        cf.crTextColor = OUT_FG;
+        cf.dwEffects   = 0;
+        SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&cf);
+        SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)L"\r\n");
+      }
+    }
+    lstrcpynW(wszPlain,wszStripped,COUNTOF(wszPlain));
+  }
+
+  RegisterLine(iLineIdx,wszPlain);
+}
+
+static void DoAppend(const WCHAR *wszText, BOOL bNewLine)
+{
+  DoAppendEx(wszText,bNewLine,0);
 }
 static void EnableButtons(BOOL bRunning)
 {
@@ -270,13 +496,8 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
                        WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP | SS_ENDELLIPSIS,
                        0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_STATUS,g_hinst,NULL);
 
-      /* 目录框：留空 = 跟随当前文件；填了就在该目录下跑命令 */
-      CreateWindowEx(0,L"STATIC",L"目录:",
-                     WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
-                     0,0,0,0,hwnd,(HMENU)-1,g_hinst,NULL);
-      g_hwndDir = CreateWindowEx(WS_EX_CLIENTEDGE,L"EDIT",NULL,
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                    0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_DIR,g_hinst,NULL);
+      /* 目录框已移除：默认就跟随当前文件，%DIR% 也能显式指定，
+         多一个输入框只是多一处要填的地方。 */
 
       g_hwndCombo = CreateWindowEx(0,L"COMBOBOX",NULL,
                      WS_CHILD | WS_VISIBLE | CBS_DROPDOWN | CBS_AUTOHSCROLL |
@@ -297,14 +518,21 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
                      WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
                      0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_CLEAR,g_hinst,NULL);
 
-      g_hwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE,L"EDIT",NULL,
-                    WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE |
-                    ES_READONLY | ES_AUTOVSCROLL,
+      /* 输出区：用 RichEdit 而不是 EDIT —— 只有 RichEdit 能逐段上色，
+         才能还原 gcc / git / ls 的 ANSI 颜色。
+         必须加载 msftedit.dll，否则 MSFTEDIT_CLASS 建不出来。 */
+      LoadLibraryW(L"Msftedit.dll");
+      g_hwndEdit = CreateWindowExW(WS_EX_CLIENTEDGE,MSFTEDIT_CLASS,NULL,
+                    WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
+                    ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL |
+                    ES_NOHIDESEL,
                     0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_LOG,g_hinst,NULL);
 
       /* 子类化输出框：捕获双击跳转 + 回车直接运行命令 */
-      g_pfnEditProc = (WNDPROC)SetWindowLongPtr(g_hwndEdit,GWLP_WNDPROC,
-                                               (LONG_PTR)OutputEditProc);
+      if (g_hwndEdit) {
+        g_pfnEditProc = (WNDPROC)SetWindowLongPtr(g_hwndEdit,GWLP_WNDPROC,
+                                                 (LONG_PTR)OutputEditProc);
+      }
       g_pfnComboProc = (WNDPROC)SetWindowLongPtr(g_hwndCombo,GWLP_WNDPROC,
                                                  (LONG_PTR)OutputComboProc);
 
@@ -338,43 +566,64 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
       if (g_hFontMono)
         SendMessage(g_hwndEdit,WM_SETFONT,(WPARAM)g_hFontMono,FALSE);
 
+      /* RichEdit 背景色：EM_SETBKGNDCOLOR 是 RichEdit 独有的，
+         普通 EDIT 没有。底色必须跟 ANSI 调色板配套，否则亮黄亮青看不清。 */
+      if (g_hwndEdit) {
+        SendMessage(g_hwndEdit,EM_SETBKGNDCOLOR,0,(LPARAM)OUT_BG);
+        /* 默认文字色：不先设一次，空文档时插入点后面是系统默认黑字，
+           在深色底上直接隐形 */
+        {
+          CHARFORMAT2W cf;
+          memset(&cf,0,sizeof(cf));
+          cf.cbSize = sizeof(cf);
+          cf.dwMask = CFM_COLOR;
+          cf.crTextColor = OUT_FG;
+          SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_ALL | SCF_DEFAULT,(LPARAM)&cf);
+        }
+        /* 左/右留白，否则贴边很难看 */
+        SendMessage(g_hwndEdit,EM_SETMARGINS,
+                    EC_LEFTMARGIN | EC_RIGHTMARGIN,MAKELPARAM(6,6));
+      }
+
       Output_RefreshStatus();
       return 0;
     }
 
     case WM_SIZE: {
-      int cx = LOWORD(lParam);
-      int cy = HIWORD(lParam);
-      int y = 0;
+      /* 布局统一用同一套边距和间距，避免各控件对不齐：
+         外边距 6px，行间距 4px，按钮等宽 58px。 */
+      int cx      = LOWORD(lParam);
+      int cy      = HIWORD(lParam);
+      int nPad    = 6;
       int hStatus = 18;
-      int hRow = 24;
+      int hRow    = 24;
+      int nBtnW   = 58;
+      int nGap    = 4;
+      int y       = nPad;
+      int xRun, xStop, xClear;
 
       /* 状态条 */
       if (g_hwndStatus)
-        MoveWindow(g_hwndStatus,4,y,cx - 8,hStatus,TRUE);
-      y += hStatus;
+        MoveWindow(g_hwndStatus,nPad,y,cx - 2 * nPad,hStatus,TRUE);
+      y += hStatus + nGap;
 
-      /* 目录行：「目录:」标签 + 输入框 */
-      if (GetDlgItem(hwnd,-1))
-        MoveWindow(GetDlgItem(hwnd,-1),4,y + 3,34,hRow - 4,TRUE);
-      if (g_hwndDir)
-        MoveWindow(g_hwndDir,38,y,cx - 42,hRow - 2,TRUE);
-      y += hRow;
-
-      /* 命令行 + 按钮 */
+      /* 命令行 + 右侧三个按钮，从右往左排 */
+      xClear = cx - nPad - nBtnW;
+      xStop  = xClear - nGap - nBtnW;
+      xRun   = xStop  - nGap - nBtnW;
       if (g_hwndCombo)
-        MoveWindow(g_hwndCombo,4,y,cx - 3 * 62 - 16,hRow - 2,TRUE);
+        MoveWindow(g_hwndCombo,nPad,y,xRun - nPad - nGap,hRow - 2,TRUE);
       if (GetDlgItem(hwnd,IDC_OUTPUT_RUN))
-        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_RUN),cx - 3*62 - 10,y,58,hRow - 2,TRUE);
+        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_RUN),xRun,y,nBtnW,hRow - 2,TRUE);
       if (GetDlgItem(hwnd,IDC_OUTPUT_STOP))
-        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_STOP),cx - 2*62 - 6,y,58,hRow - 2,TRUE);
+        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_STOP),xStop,y,nBtnW,hRow - 2,TRUE);
       if (GetDlgItem(hwnd,IDC_OUTPUT_CLEAR))
-        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_CLEAR),cx - 62 - 2,y,58,hRow - 2,TRUE);
+        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_CLEAR),xClear,y,nBtnW,hRow - 2,TRUE);
       y += hRow;
 
       /* 输出区占剩下的全部 */
       if (g_hwndEdit)
-        MoveWindow(g_hwndEdit,2,y,cx - 4,cy - y - 2,TRUE);
+        MoveWindow(g_hwndEdit,nPad,y,cx - 2 * nPad,cy - y - nPad,TRUE);
       return 0;
     }
 
@@ -401,19 +650,22 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
           Output_Stop();
           return 0;
         case IDC_OUTPUT_CLEAR:
-          if (g_hwndEdit)
+          if (g_hwndEdit) {
             SetWindowText(g_hwndEdit,L"");
+            /* 清空后把默认色重新设一遍：RichEdit 清空后段落格式会留旧值，
+               不重设的话下次输出可能续到上一段留下的颜色上 */
+            {
+              CHARFORMAT2W cf;
+              memset(&cf,0,sizeof(cf));
+              cf.cbSize = sizeof(cf);
+              cf.dwMask = CFM_COLOR | CFM_BOLD;
+              cf.crTextColor = OUT_FG;
+              cf.dwEffects   = 0;
+              SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_ALL | SCF_DEFAULT,(LPARAM)&cf);
+            }
+          }
           g_nLines = 0;
           memset(g_aLines,0,sizeof(g_aLines));
-          return 0;
-        case IDC_OUTPUT_DIR:
-          /* 目录框内容变了：立刻采用，下次运行即生效 */
-          if (HIWORD(wParam) == EN_CHANGE && g_hwndDir) {
-            WCHAR wszDir[MAX_PATH];
-            wszDir[0] = L'\0';
-            GetWindowText(g_hwndDir,wszDir,COUNTOF(wszDir));
-            Output_SetWorkDir(wszDir);
-          }
           return 0;
       }
       break;
@@ -562,24 +814,16 @@ void Output_SetEditorState(int iLine, int iSelStart, int iSelEnd)
 /* ---------------------------------------------------------------------------
    工作目录
 
-   默认跟随当前文件所在目录 —— 用户打开 D:\笔记\a.c 后跑 gcc / build.bat /
+   固定跟随当前文件所在目录 —— 用户打开 D:\笔记.c 后跑 gcc / build.bat /
    make，都期望相对于 D:\笔记\ 而不是 exe 所在的 bin\ 目录。
    没打开文件时退回 exe 所在目录（g_wchWorkingDirectory）。
 
-   用户可以在「目录」输入框里手改，改完后命令就在那个目录下跑。
-   输入框为空表示「跟随当前文件」。
+   不提供手填覆盖：一个空着的输入框只会让人问「这填什么」。
+   真要换目录，命令里写 cd /d 或 %DIR% 就够了。
 --------------------------------------------------------------------------- */
 
-static WCHAR wszWorkDir[MAX_PATH] = L"";   /* 用户覆盖的工作目录；空 = 跟随文件 */
 static OutputRunHook g_pfnRunHook = NULL;   /* 运行前确认回调 */
 static void         *g_pHookUser = NULL;
-
-void Output_SetWorkDir(const WCHAR *wszPath)
-{
-  lstrcpyn(wszWorkDir,wszPath ? wszPath : L"",COUNTOF(wszWorkDir));
-  Output_RefreshStatus();
-}
-
 
 void Output_SetRunHook(OutputRunHook pfnHook, void *pUser)
 {
@@ -588,25 +832,13 @@ void Output_SetRunHook(OutputRunHook pfnHook, void *pUser)
 }
 
 
-const WCHAR *Output_GetWorkDir(void)
-{
-  return wszWorkDir;
-}
-
-
 /*
-  算出本次命令真正使用的工作目录。
-
-  优先级：用户手填 > 当前文件所在目录 > exe 所在目录
+  算出本次命令使用的工作目录：当前文件所在目录，没有文件就用 exe 目录。
 */
 static void ResolveWorkDir(WCHAR *wszOut, int cchOut)
 {
   wszOut[0] = L'\0';
 
-  if (wszWorkDir[0]) {
-    lstrcpyn(wszOut,wszWorkDir,cchOut);
-    return;
-  }
   if (wszCurFilePath[0]) {
     lstrcpyn(wszOut,wszCurFilePath,cchOut);
     /* 去掉文件名，只留目录 */
@@ -641,16 +873,23 @@ void Output_RefreshStatus(void)
   if (!g_hwndStatus || !IsWindow(g_hwndStatus))
     return;
 
-  if (wszCurFilePath[0])
-    wsprintfW(wszText,L"%%FILE%% = %s",wszCurFilePath);
-  else
-    lstrcpyW(wszText,L"当前没有打开的文件，%FILE% / %DIR% / %NAME% 展开为空");
-
-  /* 同时显示命令将在哪个目录下跑 —— 少了这一句，
-     用户写 gcc foo.c 失败时根本不知道去哪找原因 */
-  ResolveWorkDir(wszDir,COUNTOF(wszDir));
-  if (wszDir[0])
-    wsprintfW(wszText + lstrlenW(wszText),L"    工作目录: %s",wszDir);
+  /* 只显示目录 + 文件名，不把完整路径再说一遍 ——
+     文件路径里已经包含目录，两个都列是重复信息，还挤占宽度。 */
+  if (wszCurFilePath[0]) {
+    const WCHAR *pName = CurFileName();
+    ResolveWorkDir(wszDir,COUNTOF(wszDir));
+    if (wszDir[0])
+      wsprintfW(wszText,L"%s%s",wszDir,pName);
+    else
+      lstrcpynW(wszText,pName,COUNTOF(wszText));
+  }
+  else {
+    ResolveWorkDir(wszDir,COUNTOF(wszDir));
+    if (wszDir[0])
+      wsprintfW(wszText,L"未打开文件，命令在 %s 下运行",wszDir);
+    else
+      lstrcpyW(wszText,L"未打开文件");
+  }
 
   SetWindowText(g_hwndStatus,wszText);
 }
@@ -879,7 +1118,7 @@ void Output_Run(const WCHAR *wszCmd)
   si.hStdOutput  = hOutWr;
   si.hStdError   = hOutWr;
 
-  /* 工作目录：跟随当前文件所在目录，除非用户在目录框里手改过 */
+  /* 工作目录：跟随当前文件所在目录 */
   ResolveWorkDir(wszWorkDir2,COUNTOF(wszWorkDir2));
 
   InterlockedExchange(&g_lCancel,0);
@@ -888,16 +1127,15 @@ void Output_Run(const WCHAR *wszCmd)
   EnableButtons(TRUE);
   if (g_hwndEdit)
     SetWindowText(g_hwndEdit,L"");
-  DoAppend(wszCmd,TRUE);
-  DoAppend(L"--------------------------------------------------",TRUE);
+  DoAppendEx(wszCmd,TRUE,1);
+  DoAppendEx(L"--------------------------------------------------",TRUE,2);
 
-  /* 切换工作目录：跟随当前文件所在目录，除非用户在目录框里手改过。
+  /* 切换工作目录：跟随当前文件所在目录。
      这里用 SetCurrentDirectory 而不是 CreateProcessW 的 lpCurrentDirectory
      —— 后者对「存在但不可用」的路径会直接返回 ERROR_INVALID_PARAMETER，
      把整条命令判死；前者失败也能继续跑（退回 exe 目录），不会误杀。
      跑完立刻恢复，不影响程序其它部分。 */
   wszPrevDir[0] = L'\0';
-  ResolveWorkDir(wszWorkDir2,COUNTOF(wszWorkDir2));
   if (wszWorkDir2[0] && GetFileAttributesW(wszWorkDir2) != INVALID_FILE_ATTRIBUTES) {
     GetCurrentDirectoryW(COUNTOF(wszPrevDir),wszPrevDir);
     SetCurrentDirectoryW(wszWorkDir2);
@@ -908,8 +1146,8 @@ void Output_Run(const WCHAR *wszCmd)
   {
     WCHAR wszErr[128];
     wsprintfW(wszErr,L"[启动失败] 错误码 %lu",GetLastError());
-    DoAppend(wszErr,TRUE);
-    DoAppend(L"提示：命令必须是可执行程序或 .cmd/.bat 批处理。",TRUE);
+    DoAppendEx(wszErr,TRUE,2);
+    DoAppendEx(L"提示：命令必须是可执行程序或 .cmd/.bat 批处理。",TRUE,2);
     g_bRunning = FALSE;
     EnableButtons(FALSE);
     goto done;
@@ -930,15 +1168,49 @@ void Output_Run(const WCHAR *wszCmd)
   }
   g_hReadThread = CreateThread(NULL,0,ReadThreadProc,g_hOutRd,0,NULL);
 
-  /* 等待进程退出（带取消轮询，最多等到它自己结束） */
+  /* 等进程结束。这里必须一边等一边泵消息 —— 读取线程用 PostMessage
+     投递文本，主线程不泵消息的话，输出会全堆在队列里，
+     等命令跑完才一口气蹦出来（实测一条 4 秒的命令，输出也是 4 秒后
+     才出现，中间一片空白）。
+
+     不直接调 MsgWaitForMultipleObjects 是因为还要处理取消；
+     用 PeekMessage 轮询就够，输出量再大也吃得下。 */
   for (;;) {
-    if (WaitForSingleObject(pi.hProcess,100) == WAIT_OBJECT_0)
+    MSG msg;
+
+    /* 先把队列里已到达的输出落地 */
+    while (PeekMessage(&msg,NULL,0,0,PM_REMOVE)) {
+      TranslateMessage(&msg);
+      DispatchMessage(&msg);
+    }
+
+    if (WaitForSingleObject(pi.hProcess,50) == WAIT_OBJECT_0)
       break;
     if (InterlockedCompareExchange(&g_lCancel,0,0)) {
       TerminateProcess(pi.hProcess,1);
       break;
     }
   }
+
+  /* 进程结束了，但管道里可能还有尾巴。再泵几轮，让读取线程
+     把剩下的行投递完，否则最后几行会丢。 */
+  {
+    int nSpins;
+    for (nSpins = 0; nSpins < 40; nSpins++) {
+      MSG msg;
+      BOOL bGot = FALSE;
+      while (PeekMessage(&msg,NULL,0,0,PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+        bGot = TRUE;
+      }
+      if (!bGot && g_hReadThread &&
+          WaitForSingleObject(g_hReadThread,0) == WAIT_OBJECT_0)
+        break;
+      Sleep(10);
+    }
+  }
+
   /* 恢复原工作目录 */
   if (wszPrevDir[0])
     SetCurrentDirectoryW(wszPrevDir);
@@ -957,7 +1229,7 @@ void Output_Run(const WCHAR *wszCmd)
       wsprintfW(wszDone,L"[已中止] 退出码 %lu",dwExit);
     else
       wsprintfW(wszDone,L"[完成] 退出码 %lu",dwExit);
-    DoAppend(wszDone,TRUE);
+    DoAppendEx(wszDone,TRUE,2);
   }
   CloseHandle(pi.hProcess);
   g_hProc = NULL;

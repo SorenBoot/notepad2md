@@ -5,10 +5,13 @@
   编辑器底部的小面板：跑一条命令，把 stdout/stderr 实时显示出来。
   输出里出现「文件:行号」时双击该行可跳到编辑器对应位置。
 
+  输出控件是 RichEdit（MSFTEDIT_CLASS），解析 ANSI 颜色转义，
+  gcc / git / ls 的颜色能还原出来。
+
   刻意不为（保持轻量，也避免 Win7 兼容问题）：
-    - 不做终端模拟器（不嵌 conhost，不用 ConPTY）
-    - 不解析 ANSI 转义序列（纯文本）
-    - 不支持交互式输入（stdin 接 NUL，交互程序会自行退出或弹自己的窗口）
+    - 不做终端模拟器（不嵌 conhost，不用 ConPTY）：不支持光标定位、
+      全屏程序、交互输入（stdin 接 NUL，交互程序会自行退出）
+    - 工作目录固定跟随当前文件，不提供手填覆盖
 
   ===========================================================================*/
 
@@ -28,7 +31,6 @@ extern "C" {
 #define IDC_OUTPUT_CLEAR  0xE713
 #define IDC_OUTPUT_LOG    0xE714
 #define IDC_OUTPUT_STATUS 0xE715
-#define IDC_OUTPUT_DIR    0xE716
 
 /*
   初始化模块。调用一次，在任何其他 Output_* 之前。
