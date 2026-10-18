@@ -333,6 +333,8 @@
 #define IDM_OUTLINE_GOTO                 40449
 #define IDM_VIEW_OUTPUT                  40450
 #define IDM_OUTPUT_GOTOLINE              40451
+#define IDM_OUTPUT_FLOAT                 40452
+#define IDM_OUTPUT_DOCK                  40453
 #define IDM_HELP_ABOUT                  40500
 #define IDM_TRAY_RESTORE                40600
 #define IDM_TRAY_EXIT                   40601

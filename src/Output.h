@@ -126,6 +126,30 @@ BOOL Output_GetGotoTarget(int idx, WCHAR *wszFile, int cchFile, int *piLine);
 */
 HWND Output_GetComboBox(void);
 
+/*
+  面板是否处于独立（浮动）窗口状态。
+
+  嵌入时面板是主窗口的子窗口，停靠在底部；
+  独立时变成带边框的顶层窗口，可以自由拖动、缩放、最大化。
+*/
+BOOL Output_IsFloating(void);
+
+/*
+  切换嵌入 / 独立。
+
+  bFloat —— TRUE 独立窗口，FALSE 停靠回主窗口底部
+  切换后主窗口需要重新布局（嵌入时给它留位置，独立时不留）。
+*/
+void Output_SetFloating(BOOL bFloat);
+
+/*
+  面板关闭请求的回调（独立窗口点关闭按钮时）。
+
+  主窗口装上它，把菜单勾选状态同步掉。
+*/
+typedef void (*OutputCloseHook)(void *pUser);
+void Output_SetCloseHook(OutputCloseHook pfnHook, void *pUser);
+
 #ifdef __cplusplus
 }
 #endif

@@ -50,6 +50,10 @@ static WNDPROC   g_pfnEditProc = NULL;   /* 输出框原过程，子类化用 */
 static WNDPROC   g_pfnComboProc = NULL;  /* 命令框原过程，子类化用 */
 static HWND      g_hwndStatus = NULL;    /* 顶部信息条 */
 static HFONT     g_hFontMono = NULL;     /* 输出区等宽字体 */
+static BOOL      g_bFloating = FALSE;    /* 是否独立窗口 */
+static RECT      g_rcFloat = {0,0,0,0};  /* 浮动时的窗口矩形（切回嵌入前记下） */
+static OutputCloseHook g_pfnCloseHook = NULL;  /* 关闭回调 */
+static void           *g_pCloseUser = NULL;
 static HANDLE    g_hReadThread = NULL;
 static HANDLE    g_hProc       = NULL;
 static HANDLE    g_hOutRd      = NULL;
@@ -68,6 +72,7 @@ static int      g_nLines = 0;
 /* 后面才定义的几个接口，这里前置声明，供上面的窗口过程使用 */
 static const WCHAR *CurFileName(void);
 void Output_RefreshStatus(void);
+static void LayoutChildren(HWND hwnd, int cx, int cy);
 
 /* ---------------------------------------------------------------------------
    登记一行：识别「文件:行号」格式，认不出就当普通行。
@@ -109,47 +114,47 @@ static void RegisterLine(int idx, const WCHAR *wszLine)
      - 文件名含空格，不能用空格分隔
      - 盘符冒号必须跳过
      - 行号是「第一个位于路径之后的 :数字」，不是最后一个
-        （最后一个 :5 是列号，会把行号取错）
+    （最后一个 :5 是列号，会把行号取错）
      做法：从位置 2 起找第一个「后面紧跟数字」的 ':' 或 '('。 */
   {
     const WCHAR *pBest = NULL;
     const WCHAR *p = q;
     int iStart = (iswalpha(q[0]) && q[1] == L':') ? 2 : 0;
     for (p = q + iStart; *p; p++) {
-      if ((*p == L':' || *p == L'(') && iswdigit(p[1])) {
-        pBest = p;
-        break;
-      }
+  if ((*p == L':' || *p == L'(') && iswdigit(p[1])) {
+    pBest = p;
+    break;
+  }
     }
     if (pBest) {
-      cch = (int)(pBest - q);
-      if (cch > MAX_PATH - 1)
-        cch = MAX_PATH - 1;
-      memcpy(wszFile, q, (size_t)cch * sizeof(WCHAR));
-      wszFile[cch] = 0;
-      pStop = pBest;
+  cch = (int)(pBest - q);
+  if (cch > MAX_PATH - 1)
+    cch = MAX_PATH - 1;
+  memcpy(wszFile, q, (size_t)cch * sizeof(WCHAR));
+  wszFile[cch] = 0;
+  pStop = pBest;
     }
     else {
-      wszFile[0] = 0;
-      cch = 0;
-      pStop = q;
+  wszFile[0] = 0;
+  cch = 0;
+  pStop = q;
     }
   }
 have_stop:
   if (*pStop == L':') {
     iLine = (int)wcstol(pStop + 1,&pEnd,10);
     if (pEnd && pEnd != pStop + 1)
-      bOk = TRUE;
+  bOk = TRUE;
   }
   else if (*pStop == L'(') {
     iLine = (int)wcstol(pStop + 1,&pEnd,10);
     if (pEnd && *pEnd == L',')
-      bOk = TRUE;
+  bOk = TRUE;
   }
   /* 文件名里得带 '.' 或路径分隔，否则 "12:xx" 这类数字前缀会误判 */
   if (bOk && cch > 0 && iLine > 0 &&
-      (StrChr(wszFile,L'.') || StrChr(wszFile,L'\\') ||
-       StrChr(wszFile,L'/')))
+  (StrChr(wszFile,L'.') || StrChr(wszFile,L'\\') ||
+   StrChr(wszFile,L'/')))
   {
     p->bGoto = TRUE;
     lstrcpyn(p->wszFile,wszFile,MAX_PATH);
@@ -160,15 +165,15 @@ have_stop:
    子类化输出框：双击某行时，把该行索引发给主窗口去跳转。
 --------------------------------------------------------------------------- */
 static LRESULT CALLBACK OutputEditProc(HWND hwnd, UINT umsg,
-                                       WPARAM wParam, LPARAM lParam)
+                                   WPARAM wParam, LPARAM lParam)
 {
   if (umsg == WM_LBUTTONDBLCLK) {
     /* 取当前选区起点所在的行，EDIT 的选区就是 caret 位置 */
     DWORD dwStart = 0, dwEnd = 0;
     SendMessage(hwnd,EM_GETSEL,(WPARAM)&dwStart,(LPARAM)&dwEnd);
     {
-      int iLine = (int)SendMessage(hwnd,EM_LINEFROMCHAR,(WPARAM)dwStart,0);
-      PostMessage(GetParent(hwnd),WM_APP_OUTPUT_GOTO,0,(LPARAM)iLine);
+  int iLine = (int)SendMessage(hwnd,EM_LINEFROMCHAR,(WPARAM)dwStart,0);
+  PostMessage(g_hwndOwner,WM_APP_OUTPUT_GOTO,0,(LPARAM)iLine);
     }
     return 0;
   }
@@ -180,12 +185,11 @@ static LRESULT CALLBACK OutputEditProc(HWND hwnd, UINT umsg,
    子类化命令框：回车直接运行，不用离开键盘去点按钮。
 --------------------------------------------------------------------------- */
 static LRESULT CALLBACK OutputComboProc(HWND hwnd, UINT umsg,
-                                        WPARAM wParam, LPARAM lParam)
+                                    WPARAM wParam, LPARAM lParam)
 {
   if (umsg == WM_KEYDOWN && wParam == VK_RETURN) {
-    HWND hwndPanel = GetParent(hwnd);
-    if (hwndPanel)
-      PostMessage(hwndPanel,WM_COMMAND,
+    if (g_hwndPanel)
+      PostMessage(g_hwndPanel,WM_COMMAND,
                   MAKEWPARAM(IDC_OUTPUT_RUN,BN_CLICKED),0);
     return 0;
   }
@@ -251,7 +255,7 @@ static const COLORREF g_aAnsi[16] = {
    39 默认前景。背景色 40-47 也收下 —— 否则某些工具用背景高亮标错行，
    我们不认就会把整段渲染成怪色。 */
 static void ApplySgr(const WCHAR *wszParams, COLORREF *pFg, BOOL *pbBold,
-                     COLORREF *pBg, BOOL *pbHasBg)
+                 COLORREF *pBg, BOOL *pbHasBg)
 {
   const WCHAR *p = wszParams;
   if (!*p) {                     /* ESC[m == ESC[0m */
@@ -273,7 +277,7 @@ static void ApplySgr(const WCHAR *wszParams, COLORREF *pFg, BOOL *pbBold,
     else if (n >= 40 && n <= 47)  { *pBg = g_aAnsi[n - 40];      *pbHasBg = TRUE; }
     else if (n >= 100 && n <= 107){ *pBg = g_aAnsi[n - 100 + 8]; *pbHasBg = TRUE; }
     /* 其它（下划线、闪烁、256 色扩展）一律忽略：不认识就不动色，
-       总比乱涂好 */
+   总比乱涂好 */
     if (!*p) break;
   }
 }
@@ -285,7 +289,7 @@ static void ApplySgr(const WCHAR *wszParams, COLORREF *pFg, BOOL *pbBold,
   调用方提供缓冲。纯文本必须和显示内容一致，否则双击跳转的行号会错位。
 */
 static void AppendColored(const WCHAR *wszIn, BOOL bNewLine,
-                          WCHAR *wszPlain, int cchPlain)
+                      WCHAR *wszPlain, int cchPlain)
 {
   COLORREF fg = OUT_FG, bg = OUT_BG;
   BOOL bBold = FALSE, bHasBg = FALSE;
@@ -302,70 +306,70 @@ static void AppendColored(const WCHAR *wszIn, BOOL bNewLine,
 
   while (*p) {
     if (*p == 0x1B && p[1] == L'[') {
-      /* ESC [ ... m  —— 只认以 'm' 结尾的 SGR，其余（光标移动、清屏）
-         连同参数一起丢掉，不把控制码当文字显示 */
-      const WCHAR *q = p + 2;
-      WCHAR wszParams[64];
-      int   nParam = 0;
-      while (*q && *q != L'm' && *q != L';' && !(*q >= L'0' && *q <= L'9') &&
-             *q != L'?' && nParam < (int)COUNTOF(wszParams) - 1)
-        q++;
-      /* 收参数 */
-      {
-        const WCHAR *r = p + 2;
-        nParam = 0;
-        while (*r && *r != L'm' && nParam < (int)COUNTOF(wszParams) - 1) {
-          if ((*r >= L'0' && *r <= L'9') || *r == L';')
-            wszParams[nParam++] = *r;
-          else if (*r != L'?')
-            break;              /* 不是 SGR（比如 ESC[2J），别乱吃 */
-          r++;
-        }
-        wszParams[nParam] = L'\0';
-        if (*r == L'm') {
-          ApplySgr(wszParams,&fg,&bBold,&bg,&bHasBg);
-          p = r + 1;
-          continue;             /* 转义吃掉，不显示 */
-        }
-      }
-      /* 不是 SGR：整个转义序列跳过不显示，但不当成文字 */
-      {
-        const WCHAR *r = p + 1;
-        if (*r == L'[') {
-          r++;
-          while (*r && !((*r >= L'@' && *r <= L'~')))
-            r++;
-          if (*r) r++;
-          p = r;
-          continue;
-        }
-      }
-      /* 落单的 ESC：丢弃 */
-      p++;
+  /* ESC [ ... m  —— 只认以 'm' 结尾的 SGR，其余（光标移动、清屏）
+     连同参数一起丢掉，不把控制码当文字显示 */
+  const WCHAR *q = p + 2;
+  WCHAR wszParams[64];
+  int   nParam = 0;
+  while (*q && *q != L'm' && *q != L';' && !(*q >= L'0' && *q <= L'9') &&
+         *q != L'?' && nParam < (int)COUNTOF(wszParams) - 1)
+    q++;
+  /* 收参数 */
+  {
+    const WCHAR *r = p + 2;
+    nParam = 0;
+    while (*r && *r != L'm' && nParam < (int)COUNTOF(wszParams) - 1) {
+      if ((*r >= L'0' && *r <= L'9') || *r == L';')
+        wszParams[nParam++] = *r;
+      else if (*r != L'?')
+        break;              /* 不是 SGR（比如 ESC[2J），别乱吃 */
+      r++;
+    }
+    wszParams[nParam] = L'\0';
+    if (*r == L'm') {
+      ApplySgr(wszParams,&fg,&bBold,&bg,&bHasBg);
+      p = r + 1;
+      continue;             /* 转义吃掉，不显示 */
+    }
+  }
+  /* 不是 SGR：整个转义序列跳过不显示，但不当成文字 */
+  {
+    const WCHAR *r = p + 1;
+    if (*r == L'[') {
+      r++;
+      while (*r && !((*r >= L'@' && *r <= L'~')))
+        r++;
+      if (*r) r++;
+      p = r;
       continue;
+    }
+  }
+  /* 落单的 ESC：丢弃 */
+  p++;
+  continue;
     }
 
     /* 收集一段同色文字，一次写进去，避免逐字符发消息 */
     {
-      WCHAR wszRun[1024];
-      int   nRun = 0;
-      while (*p && *p != 0x1B && nRun < (int)COUNTOF(wszRun) - 1) {
-        wszRun[nRun++] = *p;
-        if (nPlain < cchPlain - 1)
-          wszPlain[nPlain++] = *p;
-        p++;
-      }
-      wszRun[nRun] = L'\0';
-      if (nRun > 0) {
-        CHARFORMAT2W cf;
-        memset(&cf,0,sizeof(cf));
-        cf.cbSize = sizeof(cf);
-        cf.dwMask = CFM_COLOR | CFM_BOLD;
-        cf.crTextColor = fg;
-        cf.dwEffects   = bBold ? CFE_BOLD : 0;
-        SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&cf);
-        SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)wszRun);
-      }
+  WCHAR wszRun[1024];
+  int   nRun = 0;
+  while (*p && *p != 0x1B && nRun < (int)COUNTOF(wszRun) - 1) {
+    wszRun[nRun++] = *p;
+    if (nPlain < cchPlain - 1)
+      wszPlain[nPlain++] = *p;
+    p++;
+  }
+  wszRun[nRun] = L'\0';
+  if (nRun > 0) {
+    CHARFORMAT2W cf;
+    memset(&cf,0,sizeof(cf));
+    cf.cbSize = sizeof(cf);
+    cf.dwMask = CFM_COLOR | CFM_BOLD;
+    cf.crTextColor = fg;
+    cf.dwEffects   = bBold ? CFE_BOLD : 0;
+    SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&cf);
+    SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)wszRun);
+  }
     }
   }
 
@@ -415,7 +419,7 @@ static void DoAppendEx(const WCHAR *wszText, BOOL bNewLine, int iStyle)
     int iEnd = GetWindowTextLengthW(g_hwndEdit);
     SendMessage(g_hwndEdit,EM_SETSEL,(WPARAM)iEnd,(LPARAM)iEnd);
     if (iEnd > 0)
-      iLineIdx = (int)SendMessage(g_hwndEdit,EM_LINEFROMCHAR,(WPARAM)iEnd,0);
+  iLineIdx = (int)SendMessage(g_hwndEdit,EM_LINEFROMCHAR,(WPARAM)iEnd,0);
   }
 
   if (iStyle == 0) {
@@ -423,47 +427,47 @@ static void DoAppendEx(const WCHAR *wszText, BOOL bNewLine, int iStyle)
   }
   else {
     /* 命令行/分隔线：整行一个颜色。仍然过一遍 ANSI 剥离 ——
-       命令本身可能带转义（echo 给下游上色那种），
-       直接把 ESC 原字符画到控件里会变成豆腐块。 */
+   命令本身可能带转义（echo 给下游上色那种），
+   直接把 ESC 原字符画到控件里会变成豆腐块。 */
     WCHAR wszStripped[2048];
     const WCHAR *pSrc = wszText;
     int nOut = 0;
 
     while (*pSrc && nOut < (int)COUNTOF(wszStripped) - 1) {
-      if (*pSrc == 0x1B) {
-        /* 跳过整个转义序列 */
-        const WCHAR *r = pSrc + 1;
-        if (*r == L'[') {
-          r++;
-          while (*r && !(*r >= L'@' && *r <= L'~'))
-            r++;
-          if (*r) r++;
-        }
-        else if (*r) {
-          r++;
-        }
-        pSrc = r;
-        continue;
-      }
-      wszStripped[nOut++] = *pSrc++;
+  if (*pSrc == 0x1B) {
+    /* 跳过整个转义序列 */
+    const WCHAR *r = pSrc + 1;
+    if (*r == L'[') {
+      r++;
+      while (*r && !(*r >= L'@' && *r <= L'~'))
+        r++;
+      if (*r) r++;
+    }
+    else if (*r) {
+      r++;
+    }
+    pSrc = r;
+    continue;
+  }
+  wszStripped[nOut++] = *pSrc++;
     }
     wszStripped[nOut] = L'\0';
 
     {
-      CHARFORMAT2W cf;
-      memset(&cf,0,sizeof(cf));
-      cf.cbSize = sizeof(cf);
-      cf.dwMask = CFM_COLOR | CFM_BOLD;
-      cf.crTextColor = (iStyle == 1) ? OUT_COLOR_CMD : OUT_COLOR_DIM;
-      cf.dwEffects   = (iStyle == 1) ? CFE_BOLD : 0;
-      SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&cf);
-      SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)wszStripped);
-      if (bNewLine) {
-        cf.crTextColor = OUT_FG;
-        cf.dwEffects   = 0;
-        SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&cf);
-        SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)L"\r\n");
-      }
+  CHARFORMAT2W cf;
+  memset(&cf,0,sizeof(cf));
+  cf.cbSize = sizeof(cf);
+  cf.dwMask = CFM_COLOR | CFM_BOLD;
+  cf.crTextColor = (iStyle == 1) ? OUT_COLOR_CMD : OUT_COLOR_DIM;
+  cf.dwEffects   = (iStyle == 1) ? CFE_BOLD : 0;
+  SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&cf);
+  SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)wszStripped);
+  if (bNewLine) {
+    cf.crTextColor = OUT_FG;
+    cf.dwEffects   = 0;
+    SendMessage(g_hwndEdit,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&cf);
+    SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)L"\r\n");
+  }
     }
     lstrcpynW(wszPlain,wszStripped,COUNTOF(wszPlain));
   }
@@ -480,6 +484,138 @@ static void EnableButtons(BOOL bRunning)
   EnableWindow(GetDlgItem(g_hwndPanel,IDC_OUTPUT_RUN), !bRunning);
   EnableWindow(GetDlgItem(g_hwndPanel,IDC_OUTPUT_STOP), bRunning);
 }
+/* ---------------------------------------------------------------------------
+   独立窗口的外观。嵌入时是光板子窗口（边框由主窗口提供），
+   独立时要补上标题栏和可缩放边框，否则没法拖大小。
+--------------------------------------------------------------------------- */
+static DWORD PanelStyle(void)
+{
+  if (g_bFloating)
+    return WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME |
+           WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN;
+  return WS_CHILD | WS_CLIPCHILDREN;
+}
+
+
+/* ---------------------------------------------------------------------------
+   切换嵌入 / 独立。
+
+   换父窗口用 SetParent()。RichEdit 的内容存在控件自己的缓冲区里，
+   跟着窗口走，所以文本、滚动位置、着色都不丢 —— 不需要保存再重灌。
+
+   唯一要自己补的是窗口样式：子窗口和顶层窗口的样式位不兼容，
+   必须用 SetWindowLongPtr 整体换掉，否则浮动后没有标题栏、
+   或者停靠后变成一个乱飘的顶层小窗。
+--------------------------------------------------------------------------- */
+void Output_SetFloating(BOOL bFloat)
+{
+  if (!g_hwndPanel || !IsWindow(g_hwndPanel))
+    return;
+  if (bFloat == g_bFloating)
+    return;
+
+  /* 从浮动切回嵌入前，把浮动窗口的矩形记下来，下次浮动时还原 */
+  if (!bFloat && g_bFloating)
+    GetWindowRect(g_hwndPanel, &g_rcFloat);
+
+  g_bFloating = bFloat;
+
+  /* 先脱离原来的父子关系，再改样式，最后挂到新父窗口。
+     顺序反了会让窗口在改样式瞬间按旧样式重算一次位置，闪一下。 */
+  SetParent(g_hwndPanel, NULL);
+  SetWindowLongPtr(g_hwndPanel, GWL_STYLE, PanelStyle());
+
+  if (g_bFloating) {
+    RECT rc;
+    int x, y, cx, cy;
+
+    /* 记住上次浮动的窗口位置和大小；没有记录时浮到主窗口内部。
+       只存在进程内 —— 重启后回到默认位置，跟 ini 无关。 */
+    if (g_rcFloat.right > g_rcFloat.left && g_rcFloat.bottom > g_rcFloat.top) {
+      x  = g_rcFloat.left;
+      y  = g_rcFloat.top;
+      cx = g_rcFloat.right - g_rcFloat.left;
+      cy = g_rcFloat.bottom - g_rcFloat.top;
+    }
+    else {
+      GetWindowRect(g_hwndOwner, &rc);
+      x  = rc.left + 80;
+      y  = rc.top + 80;
+      cx = 720;
+      cy = 380;
+    }
+
+    SetWindowPos(g_hwndPanel, HWND_TOP, x, y, cx, cy,
+                 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+
+    SetWindowTextW(g_hwndPanel, L"命令输出");
+  }
+  else {
+    SetParent(g_hwndPanel, g_hwndOwner);
+    SetWindowLongPtr(g_hwndPanel, GWL_STYLE, PanelStyle());
+    SetWindowPos(g_hwndPanel, NULL, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+  }
+
+  /* 主窗口重新布局：嵌入时给它留位置，独立时把那块空间收回来 */
+  SendMessage(g_hwndOwner, WM_SIZE, SIZE_RESTORED, 0);
+}
+
+
+BOOL Output_IsFloating(void)
+{
+  return g_bFloating;
+}
+
+
+void Output_SetCloseHook(OutputCloseHook pfnHook, void *pUser)
+{
+  g_pfnCloseHook = pfnHook;
+  g_pCloseUser  = pUser;
+}
+
+
+/* ---------------------------------------------------------------------------
+   子控件布局。WM_SIZE 和浮动/嵌入切换都调它，避免两套坐标各写一遍。
+--------------------------------------------------------------------------- */
+static void LayoutChildren(HWND hwnd, int cx, int cy)
+{
+
+  /* 布局统一用同一套边距和间距，避免各控件对不齐：
+     外边距 6px，行间距 4px，按钮等宽 58px。 */
+  int nPad    = 6;
+  int hStatus = 18;
+  int hRow    = 24;
+  int nBtnW   = 58;
+  int nGap    = 4;
+  int y       = nPad;
+  int xRun, xStop, xClear;
+
+  /* 状态条 */
+  if (g_hwndStatus)
+    MoveWindow(g_hwndStatus,nPad,y,cx - 2 * nPad,hStatus,TRUE);
+  y += hStatus + nGap;
+
+  /* 命令行 + 右侧三个按钮，从右往左排 */
+  xClear = cx - nPad - nBtnW;
+  xStop  = xClear - nGap - nBtnW;
+  xRun   = xStop  - nGap - nBtnW;
+  if (g_hwndCombo)
+    MoveWindow(g_hwndCombo,nPad,y,xRun - nPad - nGap,hRow - 2,TRUE);
+  if (GetDlgItem(hwnd,IDC_OUTPUT_RUN))
+    MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_RUN),xRun,y,nBtnW,hRow - 2,TRUE);
+  if (GetDlgItem(hwnd,IDC_OUTPUT_STOP))
+    MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_STOP),xStop,y,nBtnW,hRow - 2,TRUE);
+  if (GetDlgItem(hwnd,IDC_OUTPUT_CLEAR))
+    MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_CLEAR),xClear,y,nBtnW,hRow - 2,TRUE);
+  y += hRow;
+
+  /* 输出区占剩下的全部 */
+  if (g_hwndEdit)
+    MoveWindow(g_hwndEdit,nPad,y,cx - 2 * nPad,cy - y - nPad,TRUE);
+}
+
+
 static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
                                       WPARAM wParam, LPARAM lParam)
 {
@@ -589,43 +725,28 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
       return 0;
     }
 
-    case WM_SIZE: {
-      /* 布局统一用同一套边距和间距，避免各控件对不齐：
-         外边距 6px，行间距 4px，按钮等宽 58px。 */
-      int cx      = LOWORD(lParam);
-      int cy      = HIWORD(lParam);
-      int nPad    = 6;
-      int hStatus = 18;
-      int hRow    = 24;
-      int nBtnW   = 58;
-      int nGap    = 4;
-      int y       = nPad;
-      int xRun, xStop, xClear;
+    case WM_SIZE:
+      LayoutChildren(hwnd,LOWORD(lParam),HIWORD(lParam));
+      return 0;
 
-      /* 状态条 */
-      if (g_hwndStatus)
-        MoveWindow(g_hwndStatus,nPad,y,cx - 2 * nPad,hStatus,TRUE);
-      y += hStatus + nGap;
-
-      /* 命令行 + 右侧三个按钮，从右往左排 */
-      xClear = cx - nPad - nBtnW;
-      xStop  = xClear - nGap - nBtnW;
-      xRun   = xStop  - nGap - nBtnW;
-      if (g_hwndCombo)
-        MoveWindow(g_hwndCombo,nPad,y,xRun - nPad - nGap,hRow - 2,TRUE);
-      if (GetDlgItem(hwnd,IDC_OUTPUT_RUN))
-        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_RUN),xRun,y,nBtnW,hRow - 2,TRUE);
-      if (GetDlgItem(hwnd,IDC_OUTPUT_STOP))
-        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_STOP),xStop,y,nBtnW,hRow - 2,TRUE);
-      if (GetDlgItem(hwnd,IDC_OUTPUT_CLEAR))
-        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_CLEAR),xClear,y,nBtnW,hRow - 2,TRUE);
-      y += hRow;
-
-      /* 输出区占剩下的全部 */
-      if (g_hwndEdit)
-        MoveWindow(g_hwndEdit,nPad,y,cx - 2 * nPad,cy - y - nPad,TRUE);
+    case WM_GETMINMAXINFO: {
+      /* 独立窗口时给个最小尺寸，否则拖到 0x0 后按钮全挤没了 */
+      MINMAXINFO *pmmi = (MINMAXINFO*)lParam;
+      pmmi->ptMinTrackSize.x = 340;
+      pmmi->ptMinTrackSize.y = 150;
       return 0;
     }
+
+    case WM_CLOSE:
+      /* 只有独立窗口才有自己的关闭按钮；
+         嵌入时是子窗口，收不到这个 —— 但万一收到也不能销毁，
+         主窗口的 hwndOutput 会变野指针。 */
+      if (g_bFloating) {
+        Output_SetFloating(FALSE);
+        if (g_pfnCloseHook)
+          g_pfnCloseHook(g_pCloseUser);
+      }
+      return 0;
 
     case WM_CTLCOLORSTATIC:
       /* 状态条用父窗口的面色，文字用灰色，不抢焦点 */
@@ -685,9 +806,8 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
 
     case WM_APP_OUTPUT_GOTO: {
       /* 双击了某一行，转成主窗口的命令（lParam = 行索引） */
-      HWND hwndOwner = GetParent(hwnd);
-      if (hwndOwner)
-        PostMessage(hwndOwner,WM_COMMAND,
+      if (g_hwndOwner)
+        PostMessage(g_hwndOwner,WM_COMMAND,
                     MAKEWPARAM(IDM_OUTPUT_GOTOLINE,0),(LPARAM)lParam);
       return 0;
     }
