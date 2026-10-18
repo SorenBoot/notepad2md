@@ -529,8 +529,8 @@ void Output_SetFloating(BOOL bFloat)
     RECT rc;
     int x, y, cx, cy;
 
-    /* 记住上次浮动的窗口位置和大小；没有记录时浮到主窗口内部。
-       只存在进程内 —— 重启后回到默认位置，跟 ini 无关。 */
+    /* 记住上次浮动的窗口位置和大小（由主窗口从 ini 恢复进来）；
+       没有记录时浮到主窗口内部。 */
     if (g_rcFloat.right > g_rcFloat.left && g_rcFloat.bottom > g_rcFloat.top) {
       x  = g_rcFloat.left;
       y  = g_rcFloat.top;
@@ -572,6 +572,29 @@ void Output_SetCloseHook(OutputCloseHook pfnHook, void *pUser)
 {
   g_pfnCloseHook = pfnHook;
   g_pCloseUser  = pUser;
+}
+
+
+void Output_SetFloatRect(const RECT *prc)
+{
+  if (prc && prc->right > prc->left && prc->bottom > prc->top)
+    g_rcFloat = *prc;
+}
+
+
+void Output_GetFloatRect(RECT *prc)
+{
+  if (!prc)
+    return;
+
+  /* 浮动中就直接取实时矩形，用户可能刚拖过还没切回嵌入。
+     顺手更新 g_rcFloat，这样切回嵌入后记录的仍是最后的位置。 */
+  if (g_bFloating && g_hwndPanel && IsWindow(g_hwndPanel)) {
+    GetWindowRect(g_hwndPanel, prc);
+    g_rcFloat = *prc;
+  }
+  else
+    *prc = g_rcFloat;
 }
 
 

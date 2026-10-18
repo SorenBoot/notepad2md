@@ -150,6 +150,15 @@ void Output_SetFloating(BOOL bFloat);
 typedef void (*OutputCloseHook)(void *pUser);
 void Output_SetCloseHook(OutputCloseHook pfnHook, void *pUser);
 
+/*
+  浮动窗口的矩形。主窗口在启动时用 ini 里的值调 Set，退出时用 Get
+  取当前值落盘。
+
+  没设过时面板浮在主窗口内部（720x380）。
+*/
+void Output_SetFloatRect(const RECT *prc);
+void Output_GetFloatRect(RECT *prc);
+
 #ifdef __cplusplus
 }
 #endif

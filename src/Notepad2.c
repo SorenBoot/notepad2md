@@ -179,6 +179,7 @@ int       iOutputHeight = 180;     /* 输出面板高度（像素，可拖动）
 BOOL      bSplitDragging = FALSE;  /* 分隔条是否处于拖动中 */
 BOOL      bOutputSplitDragging = FALSE; /* 输出分隔条是否处于拖动中 */
 BOOL      bOutputFloating = FALSE; /* 输出面板是否独立成窗口 */
+RECT      rcOutputFloat = {0,0,0,0}; /* 输出面板浮动时的窗口矩形 */
 
 /* 预览分隔条：在 MsgSize() 中布局，在各自定义处定义 */
 static LRESULT CALLBACK SplitBarWndProc(HWND,UINT,WPARAM,LPARAM);
@@ -874,6 +875,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
         hwndOutline = NULL;
 
         // notepad2md: release output panel
+        /* 销毁前先取一次浮动矩形：SaveSettings() 在下面才调用，
+           那时窗口已经没了，取不到实时位置，只能拿到上次记录的。 */
+        Output_GetFloatRect(&rcOutputFloat);
         if (IsWindow(hwndOutput))
           DestroyWindow(hwndOutput);
         hwndOutput = NULL;
@@ -2409,6 +2413,7 @@ static void UpdateOutputMenu(void);
 static void OutputOnClose(void *pUser)
 {
   (void)pUser;
+  Output_GetFloatRect(&rcOutputFloat);   /* 停靠前先记下浮动矩形 */
   bOutputFloating = FALSE;
   if (IsWindow(hwndOutputSplit))
     ShowWindow(hwndOutputSplit,SW_SHOW);
@@ -2475,6 +2480,7 @@ void OutputToggle( BOOL bShow )
       Output_SetRunHook(OutputBeforeRun,NULL);
       Output_SetCloseHook(OutputOnClose,NULL);
       Output_SetCurrentFile(szCurFile);
+      Output_SetFloatRect(&rcOutputFloat);   /* 恢复上次的浮动窗口位置 */
     }
     /* 分隔条：只有嵌入状态才需要，独立窗口自己带边框 */
     if (!bOutputFloating) {
@@ -4593,6 +4599,7 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
       if (bShowOutput && IsWindow(hwndOutput) && !Output_IsFloating()) {
         Output_SetFloating(TRUE);
         bOutputFloating = TRUE;
+        Output_GetFloatRect(&rcOutputFloat);
         if (IsWindow(hwndOutputSplit))
           ShowWindow(hwndOutputSplit,SW_HIDE);
         UpdateOutputMenu();
@@ -4604,6 +4611,7 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
 
     case IDM_OUTPUT_DOCK:
       if (bShowOutput && IsWindow(hwndOutput) && Output_IsFloating()) {
+        Output_GetFloatRect(&rcOutputFloat);   /* 停靠前先记下浮动矩形 */
         Output_SetFloating(FALSE);
         bOutputFloating = FALSE;
         if (IsWindow(hwndOutputSplit))
@@ -6178,6 +6186,16 @@ void LoadSettings()
   bOutputFloating = IniSectionGetInt(pIniSection,L"OutputFloating",0);
   if (bOutputFloating) bOutputFloating = 1;
 
+  /* 浮动窗口矩形：任一边为 0 或反了就当作没存过，面板浮到默认位置。
+     别把垃圾值直接灌给 SetWindowPos —— 会跑到屏幕外面去。 */
+  rcOutputFloat.left   = IniSectionGetInt(pIniSection,L"OutputFloatX",0);
+  rcOutputFloat.top    = IniSectionGetInt(pIniSection,L"OutputFloatY",0);
+  rcOutputFloat.right  = rcOutputFloat.left + IniSectionGetInt(pIniSection,L"OutputFloatW",0);
+  rcOutputFloat.bottom = rcOutputFloat.top  + IniSectionGetInt(pIniSection,L"OutputFloatH",0);
+  if (rcOutputFloat.right <= rcOutputFloat.left ||
+      rcOutputFloat.bottom <= rcOutputFloat.top)
+    SetRectEmpty(&rcOutputFloat);
+
   iPreviewSplitPermille = IniSectionGetInt(pIniSection,L"PreviewSplitPermille",500);
   if (iPreviewSplitPermille < 50) iPreviewSplitPermille = 50;
   if (iPreviewSplitPermille > 950) iPreviewSplitPermille = 950;
@@ -6378,6 +6396,15 @@ void SaveSettings(BOOL bSaveSettingsNow)
   IniSectionSetInt(pIniSection,L"ShowOutline",bShowOutline);
   IniSectionSetInt(pIniSection,L"ShowOutput",bShowOutput);
   IniSectionSetInt(pIniSection,L"OutputFloating",bOutputFloating);
+  /* 用 rcOutputFloat：它在 WM_DESTROY 里销毁面板之前已经取过实时值，
+     而且每次切浮动/停靠都会刷新。这里再调一次 Output_GetFloatRect
+     是没用的 —— 走到这一步窗口通常已经销毁了。 */
+  if (!IsRectEmpty(&rcOutputFloat)) {
+    IniSectionSetInt(pIniSection,L"OutputFloatX",rcOutputFloat.left);
+    IniSectionSetInt(pIniSection,L"OutputFloatY",rcOutputFloat.top);
+    IniSectionSetInt(pIniSection,L"OutputFloatW",rcOutputFloat.right - rcOutputFloat.left);
+    IniSectionSetInt(pIniSection,L"OutputFloatH",rcOutputFloat.bottom - rcOutputFloat.top);
+  }
   IniSectionSetInt(pIniSection,L"PreviewSplitPermille",iPreviewSplitPermille);
   IniSectionSetInt(pIniSection,L"OutputHeight",iOutputHeight);
   IniSectionSetInt(pIniSection,L"EncodingDlgSizeX",cxEncodingDlg);
