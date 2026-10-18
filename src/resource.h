@@ -414,6 +414,7 @@
 #define IDS_CTXREG_FAIL                 50049
 #define IDS_CTXUNREG_OK                 50050
 #define IDS_CTXUNREG_FAIL               50051
+#define IDS_ASK_SAVE_BEFORE_RUN        50052
 #define IDS_CMDLINEHELP                 60000
 
 // Next default values for new objects

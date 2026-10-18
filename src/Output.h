@@ -28,6 +28,7 @@ extern "C" {
 #define IDC_OUTPUT_CLEAR  0xE713
 #define IDC_OUTPUT_LOG    0xE714
 #define IDC_OUTPUT_STATUS 0xE715
+#define IDC_OUTPUT_DIR    0xE716
 
 /*
   初始化模块。调用一次，在任何其他 Output_* 之前。
@@ -66,6 +67,15 @@ void Output_Run(const WCHAR *wszCmd);
   主窗口在编辑器状态变化时调用，让 %LINE% / %SEL% 保持最新。
 */
 void Output_SetEditorState(int iLine, int iSelStart, int iSelEnd);
+
+/*
+  运行命令前的确认钩子。
+
+  主窗口装上它做「文件有未保存修改，是否先保存？」之类的确认。
+  返回 TRUE 才允许运行；FALSE 则本次跳过。传 NULL 表示无需确认。
+*/
+typedef BOOL (*OutputRunHook)(void *pUser);
+void Output_SetRunHook(OutputRunHook pfnHook, void *pUser);
 
 /*
   主窗口在打开/新建文件时调用，设置 %FILE% / %DIR% / %NAME% / %EXT% 的值。

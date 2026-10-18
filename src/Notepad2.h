@@ -142,6 +142,9 @@ void OutlineToggle(BOOL bShow);
 /* notepad2md 命令输出面板 */
 void OutputToggle(BOOL bShow);
 
+/* exe 所在目录（Output 模块用作工作目录的最终回退值） */
+extern WCHAR g_wchWorkingDirectory[MAX_PATH];
+
 
 BOOL FileIO(BOOL,LPCWSTR,BOOL,int*,int*,BOOL*,BOOL*,BOOL*,BOOL);
 BOOL FileLoad(BOOL,BOOL,BOOL,BOOL,LPCWSTR);

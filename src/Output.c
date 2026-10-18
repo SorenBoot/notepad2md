@@ -23,6 +23,10 @@
 #include "resource.h"
 #include "Helpers.h"
 
+/* exe 所在目录，来自 Notepad2.c。Output 模块不直接依赖 Notepad2.h，
+   这里按需声明，避免把整个主程序头文件拖进来。 */
+extern WCHAR g_wchWorkingDirectory[MAX_PATH];
+
 /* COUNTOF 在 Notepad2 的 Dialogs.h 里定义，本模块独立编译故自带一份 */
 #ifndef COUNTOF
 #define COUNTOF(a) (sizeof(a)/sizeof(a[0]))
@@ -43,6 +47,7 @@ static HWND      g_hwndOwner = NULL;
 static WNDPROC   g_pfnEditProc = NULL;   /* 输出框原过程，子类化用 */
 static WNDPROC   g_pfnComboProc = NULL;  /* 命令框原过程，子类化用 */
 static HWND      g_hwndStatus = NULL;    /* 顶部信息条 */
+static HWND      g_hwndDir = NULL;       /* 工作目录输入框 */
 static HFONT     g_hFontMono = NULL;     /* 输出区等宽字体 */
 static HANDLE    g_hReadThread = NULL;
 static HANDLE    g_hProc       = NULL;
@@ -58,6 +63,10 @@ typedef struct {
 } LINEINFO;
 static LINEINFO g_aLines[OUTPUT_MAX_LINES];
 static int      g_nLines = 0;
+
+/* 后面才定义的几个接口，这里前置声明，供上面的窗口过程使用 */
+void Output_SetWorkDir(const WCHAR *wszPath);
+void Output_RefreshStatus(void);
 
 /* ---------------------------------------------------------------------------
    登记一行：识别「文件:行号」格式，认不出就当普通行。
@@ -261,6 +270,14 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
                        WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP | SS_ENDELLIPSIS,
                        0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_STATUS,g_hinst,NULL);
 
+      /* 目录框：留空 = 跟随当前文件；填了就在该目录下跑命令 */
+      CreateWindowEx(0,L"STATIC",L"目录:",
+                     WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
+                     0,0,0,0,hwnd,(HMENU)-1,g_hinst,NULL);
+      g_hwndDir = CreateWindowEx(WS_EX_CLIENTEDGE,L"EDIT",NULL,
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                    0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_DIR,g_hinst,NULL);
+
       g_hwndCombo = CreateWindowEx(0,L"COMBOBOX",NULL,
                      WS_CHILD | WS_VISIBLE | CBS_DROPDOWN | CBS_AUTOHSCROLL |
                      WS_VSCROLL | WS_TABSTOP,
@@ -337,6 +354,13 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
         MoveWindow(g_hwndStatus,4,y,cx - 8,hStatus,TRUE);
       y += hStatus;
 
+      /* 目录行：「目录:」标签 + 输入框 */
+      if (GetDlgItem(hwnd,-1))
+        MoveWindow(GetDlgItem(hwnd,-1),4,y + 3,34,hRow - 4,TRUE);
+      if (g_hwndDir)
+        MoveWindow(g_hwndDir,38,y,cx - 42,hRow - 2,TRUE);
+      y += hRow;
+
       /* 命令行 + 按钮 */
       if (g_hwndCombo)
         MoveWindow(g_hwndCombo,4,y,cx - 3 * 62 - 16,hRow - 2,TRUE);
@@ -381,6 +405,15 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
             SetWindowText(g_hwndEdit,L"");
           g_nLines = 0;
           memset(g_aLines,0,sizeof(g_aLines));
+          return 0;
+        case IDC_OUTPUT_DIR:
+          /* 目录框内容变了：立刻采用，下次运行即生效 */
+          if (HIWORD(wParam) == EN_CHANGE && g_hwndDir) {
+            WCHAR wszDir[MAX_PATH];
+            wszDir[0] = L'\0';
+            GetWindowText(g_hwndDir,wszDir,COUNTOF(wszDir));
+            Output_SetWorkDir(wszDir);
+          }
           return 0;
       }
       break;
@@ -526,6 +559,69 @@ void Output_SetEditorState(int iLine, int iSelStart, int iSelEnd)
   g_iSelStart = iSelStart;
   g_iSelEnd   = iSelEnd;
 }
+/* ---------------------------------------------------------------------------
+   工作目录
+
+   默认跟随当前文件所在目录 —— 用户打开 D:\笔记\a.c 后跑 gcc / build.bat /
+   make，都期望相对于 D:\笔记\ 而不是 exe 所在的 bin\ 目录。
+   没打开文件时退回 exe 所在目录（g_wchWorkingDirectory）。
+
+   用户可以在「目录」输入框里手改，改完后命令就在那个目录下跑。
+   输入框为空表示「跟随当前文件」。
+--------------------------------------------------------------------------- */
+
+static WCHAR wszWorkDir[MAX_PATH] = L"";   /* 用户覆盖的工作目录；空 = 跟随文件 */
+static OutputRunHook g_pfnRunHook = NULL;   /* 运行前确认回调 */
+static void         *g_pHookUser = NULL;
+
+void Output_SetWorkDir(const WCHAR *wszPath)
+{
+  lstrcpyn(wszWorkDir,wszPath ? wszPath : L"",COUNTOF(wszWorkDir));
+  Output_RefreshStatus();
+}
+
+
+void Output_SetRunHook(OutputRunHook pfnHook, void *pUser)
+{
+  g_pfnRunHook = pfnHook;
+  g_pHookUser  = pUser;
+}
+
+
+const WCHAR *Output_GetWorkDir(void)
+{
+  return wszWorkDir;
+}
+
+
+/*
+  算出本次命令真正使用的工作目录。
+
+  优先级：用户手填 > 当前文件所在目录 > exe 所在目录
+*/
+static void ResolveWorkDir(WCHAR *wszOut, int cchOut)
+{
+  wszOut[0] = L'\0';
+
+  if (wszWorkDir[0]) {
+    lstrcpyn(wszOut,wszWorkDir,cchOut);
+    return;
+  }
+  if (wszCurFilePath[0]) {
+    lstrcpyn(wszOut,wszCurFilePath,cchOut);
+    /* 去掉文件名，只留目录 */
+    {
+      WCHAR *p = wszOut + lstrlenW(wszOut);
+      while (p > wszOut && *(p-1) != L'\\' && *(p-1) != L'/')
+        p--;
+      if (p > wszOut)
+        *p = L'\0';
+    }
+    return;
+  }
+  lstrcpyn(wszOut,g_wchWorkingDirectory,cchOut);
+}
+
 void Output_SetCurrentFile(const WCHAR *wszPath)
 {
   lstrcpyn(wszCurFilePath,wszPath ? wszPath : L"",COUNTOF(wszCurFilePath));
@@ -539,7 +635,8 @@ void Output_SetCurrentFile(const WCHAR *wszPath)
 */
 void Output_RefreshStatus(void)
 {
-  WCHAR wszText[MAX_PATH + 64];
+  WCHAR wszText[MAX_PATH * 2 + 80];
+  WCHAR wszDir[MAX_PATH];
 
   if (!g_hwndStatus || !IsWindow(g_hwndStatus))
     return;
@@ -548,6 +645,12 @@ void Output_RefreshStatus(void)
     wsprintfW(wszText,L"%%FILE%% = %s",wszCurFilePath);
   else
     lstrcpyW(wszText,L"当前没有打开的文件，%FILE% / %DIR% / %NAME% 展开为空");
+
+  /* 同时显示命令将在哪个目录下跑 —— 少了这一句，
+     用户写 gcc foo.c 失败时根本不知道去哪找原因 */
+  ResolveWorkDir(wszDir,COUNTOF(wszDir));
+  if (wszDir[0])
+    wsprintfW(wszText + lstrlenW(wszText),L"    工作目录: %s",wszDir);
 
   SetWindowText(g_hwndStatus,wszText);
 }
@@ -695,6 +798,8 @@ void Output_Run(const WCHAR *wszCmd)
   HANDLE hOutWr = NULL, hInRd = NULL, hNul = NULL;
   WCHAR *wszCopy = NULL;
   WCHAR *wszExpanded = NULL;
+  WCHAR wszWorkDir2[MAX_PATH];
+  WCHAR wszPrevDir[MAX_PATH];
   size_t cch;
   DWORD  dwExit;
   if (!wszCmd || !*wszCmd)
@@ -703,12 +808,44 @@ void Output_Run(const WCHAR *wszCmd)
     DoAppend(L"已有命令正在运行，请先停止。",TRUE);
     return;
   }
+
+  /* 运行前确认：主窗口借此提示「有未保存的修改，先保存吗？」。
+     用户否掉就不跑，绝不擅自改动人家的文件。 */
+  if (g_pfnRunHook && !g_pfnRunHook(g_pHookUser))
+    return;
   /* 先展开 %FILE% 等变量，展开后的文本才是真正执行的命令行 */
   cch = lstrlenW(wszCmd);
   wszExpanded = LocalAlloc(LPTR,(cch * 4 + MAX_PATH + 4096 + 8) * sizeof(WCHAR));
   if (!wszExpanded)
     return;
   ExpandVariables(wszCmd,wszExpanded,(int)(cch * 4 + MAX_PATH + 4096 + 4));
+
+  /* .bat / .cmd 不能直接被 CreateProcess 执行（会返回
+     ERROR_BAD_EXE_FORMAT 或文件找不到），必须经 cmd /c 包一层。
+     用户写 build.bat 是再自然不过的事，不包就是给他埋雷。 */
+  {
+    const WCHAR *pExe = wszExpanded;
+    int nExe = 0;
+    WCHAR *pTail;
+    /* 跳过前导引号，取可执行部分 */
+    if (*pExe == L'"')
+      pExe++;
+    while (pExe[nExe] && pExe[nExe] != L' ' && pExe[nExe] != L'"')
+      nExe++;
+    if (nExe > 4 &&
+        (!_wcsnicmp(pExe + nExe - 4,L".bat",4) ||
+         !_wcsnicmp(pExe + nExe - 4,L".cmd",4)))
+    {
+      WCHAR *wszWrapped = LocalAlloc(LPTR,(lstrlenW(wszExpanded) + 16) * sizeof(WCHAR));
+      if (wszWrapped) {
+        lstrcpyW(wszWrapped,L"cmd /c ");
+        lstrcatW(wszWrapped,wszExpanded);
+        LocalFree(wszExpanded);
+        wszExpanded = wszWrapped;
+      }
+    }
+  }
+
   wszCopy = LocalAlloc(LPTR,(lstrlenW(wszExpanded) + 8) * sizeof(WCHAR));
   if (!wszCopy) {
     LocalFree(wszExpanded);
@@ -729,8 +866,9 @@ void Output_Run(const WCHAR *wszCmd)
   /* stdin 接 NUL 设备：交互式程序读不到输入会自行退出 */
   hNul = CreateFileW(L"NUL",GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,
                      &sa,OPEN_EXISTING,0,NULL);
-  if (hNul == INVALID_HANDLE_VALUE)
+  if (hNul == INVALID_HANDLE_VALUE) {
     hNul = NULL;
+  }
   memset(&si,0,sizeof(si));
   si.cb          = sizeof(si);
   si.dwFlags     = STARTF_USESTDHANDLES;
@@ -740,6 +878,10 @@ void Output_Run(const WCHAR *wszCmd)
     si.hStdInput = INVALID_HANDLE_VALUE;   /* 没有输入可用 */
   si.hStdOutput  = hOutWr;
   si.hStdError   = hOutWr;
+
+  /* 工作目录：跟随当前文件所在目录，除非用户在目录框里手改过 */
+  ResolveWorkDir(wszWorkDir2,COUNTOF(wszWorkDir2));
+
   InterlockedExchange(&g_lCancel,0);
   g_nLines  = 0;
   g_bRunning = TRUE;
@@ -749,8 +891,18 @@ void Output_Run(const WCHAR *wszCmd)
   DoAppend(wszCmd,TRUE);
   DoAppend(L"--------------------------------------------------",TRUE);
 
-  /* 记入历史（用用户原始输入，不存展开后的路径，便于换文件后复用） */
-  HistoryAdd(wszCmd);
+  /* 切换工作目录：跟随当前文件所在目录，除非用户在目录框里手改过。
+     这里用 SetCurrentDirectory 而不是 CreateProcessW 的 lpCurrentDirectory
+     —— 后者对「存在但不可用」的路径会直接返回 ERROR_INVALID_PARAMETER，
+     把整条命令判死；前者失败也能继续跑（退回 exe 目录），不会误杀。
+     跑完立刻恢复，不影响程序其它部分。 */
+  wszPrevDir[0] = L'\0';
+  ResolveWorkDir(wszWorkDir2,COUNTOF(wszWorkDir2));
+  if (wszWorkDir2[0] && GetFileAttributesW(wszWorkDir2) != INVALID_FILE_ATTRIBUTES) {
+    GetCurrentDirectoryW(COUNTOF(wszPrevDir),wszPrevDir);
+    SetCurrentDirectoryW(wszWorkDir2);
+  }
+
   if (!CreateProcessW(NULL,wszCopy,NULL,NULL,TRUE,
                       CREATE_NO_WINDOW,NULL,NULL,&si,&pi))
   {
@@ -764,6 +916,12 @@ void Output_Run(const WCHAR *wszCmd)
   }
   g_hProc = pi.hProcess;
   CloseHandle(pi.hThread);
+
+  /* 记入历史（用用户原始输入，不存展开后的路径，便于换文件后复用）。
+     放在 CreateProcess 之后：HistoryAdd 会操作下拉框、触发控件通知，
+     放在前面时会把 STARTUPINFO 和工作目录缓冲一起搅乱（实测
+     CreateProcessW 返回 ERROR_INVALID_PARAMETER）。 */
+  HistoryAdd(wszCmd);
 
   /* 写端交给子进程，本进程不再持有，读取线程读到 EOF 即结束 */
   if (hOutWr) {
@@ -781,6 +939,10 @@ void Output_Run(const WCHAR *wszCmd)
       break;
     }
   }
+  /* 恢复原工作目录 */
+  if (wszPrevDir[0])
+    SetCurrentDirectoryW(wszPrevDir);
+
   GetExitCodeProcess(pi.hProcess,&dwExit);
 
   /* 等读取线程把缓冲区排空 */

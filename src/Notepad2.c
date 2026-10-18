@@ -2339,6 +2339,35 @@ void OutlineToggle( BOOL bShow )
 /*
   切换命令输出面板（编辑器底部横条）。
 */
+/*
+  输出面板的运行前确认：文件有未保存修改时先问一句。
+
+  返回 TRUE 才让命令跑。用户选「否」就直接拒绝 —— 绝不未经允许
+  就把人家编辑器里的东西写进磁盘。
+*/
+static BOOL OutputBeforeRun(void *pUser)
+{
+  (void)pUser;
+
+  int iRet;
+
+  if (!bModified)
+    return TRUE;
+
+  /* 三选：是 = 先保存再跑；否 = 不保存，按磁盘旧内容跑；
+     取消 = 本次不跑。取消必须拦住，否则用户以为没执行。 */
+  iRet = MsgBox(MBYESNOCANCEL,IDS_ASK_SAVE_BEFORE_RUN);
+  if (iRet == IDYES) {
+    if (!FileSave(TRUE,FALSE,FALSE,FALSE))
+      return FALSE;      /* 保存失败（比如用户取消了保存对话框）就别跑 */
+    return TRUE;
+  }
+  if (iRet == IDNO)
+    return TRUE;         /* 用户明知道有未保存修改仍要跑，尊重 */
+  return FALSE;          /* IDCANCEL */
+}
+
+
 void OutputToggle( BOOL bShow )
 {
   RECT rc;
@@ -2356,6 +2385,9 @@ void OutputToggle( BOOL bShow )
         bShowOutput = FALSE;
         return;
       }
+      /* 装上「未保存先问一句」的钩子 */
+      Output_SetRunHook(OutputBeforeRun,NULL);
+      Output_SetCurrentFile(szCurFile);
     }
     ShowWindow(hwndOutput,SW_SHOW);
   }
