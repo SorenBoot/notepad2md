@@ -11,7 +11,6 @@
     - 因此本面板不是终机的替代品，只服务于
       「跑个命令看结果、顺着错误行回去改代码」这个编辑器场景。
   ===========================================================================*/
-
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -25,32 +24,26 @@
 #include "Helpers.h"
 
 /* COUNTOF 在 Notepad2 的 Dialogs.h 里定义，本模块独立编译故自带一份 */
-
 #ifndef COUNTOF
 #define COUNTOF(a) (sizeof(a)/sizeof(a[0]))
 #endif
 #define OUTPUT_MAX_TEXT   (512 * 1024)   /* 文本上限，超出从头截断 */
-
 #define OUTPUT_MAX_LINES   4096          /* 可跳转行登记表容量 */
-
 #define OUTPUT_PIPE_CHUNK  4096
 
 /* 面板内部用的自定义消息 */
-
 #define WM_APP_OUTPUT      (WM_APP + 0x071)   /* 追加文本 */
-
 #define WM_APP_OUTPUT_GOTO (WM_APP + 0x072)   /* 双击跳转 */
-
 static HINSTANCE g_hinst;
 static HWND      g_hwndPanel = NULL;
 static HWND      g_hwndEdit  = NULL;     /* 只读输出框 */
-
 static HWND      g_hwndCombo = NULL;     /* 命令下拉 */
-
 static ATOM      g_atomClass = 0;
 static HWND      g_hwndOwner = NULL;
 static WNDPROC   g_pfnEditProc = NULL;   /* 输出框原过程，子类化用 */
-
+static WNDPROC   g_pfnComboProc = NULL;  /* 命令框原过程，子类化用 */
+static HWND      g_hwndStatus = NULL;    /* 顶部信息条 */
+static HFONT     g_hFontMono = NULL;     /* 输出区等宽字体 */
 static HANDLE    g_hReadThread = NULL;
 static HANDLE    g_hProc       = NULL;
 static HANDLE    g_hOutRd      = NULL;
@@ -58,7 +51,6 @@ static volatile LONG g_lCancel = 0;
 static BOOL      g_bRunning    = FALSE;
 
 /* 一行输出对应一条记录：是否可跳转、目标文件与行号 */
-
 typedef struct {
   BOOL  bGoto;
   WCHAR wszFile[MAX_PATH];
@@ -75,7 +67,6 @@ static int      g_nLines = 0;
    idx 是「输出框里的视觉行号」，由 DoAppend 逐行传入 ——
    这样双击时 EDIT 报上来的行号才能和登记表对上。
 --------------------------------------------------------------------------- */
-
 static void RegisterLine(int idx, const WCHAR *wszLine)
 {
   LINEINFO *p;
@@ -91,7 +82,6 @@ static void RegisterLine(int idx, const WCHAR *wszLine)
 
   /* 每写一行就登记一次，认不出 file:line 的也占一个槽（bGoto=FALSE），
      保证登记表下标与输出框里的视觉行号严格一致 */
-
   p = &g_aLines[idx];
   memset(p,0,sizeof(*p));
   if (idx + 1 > g_nLines)
@@ -102,7 +92,6 @@ static void RegisterLine(int idx, const WCHAR *wszLine)
   /* 行首文件名：扫到 ':'（gcc 风格）或 '('（MSVC 风格）为止。
      盘符冒号必须跳过：C:\diroo.c:23 的第一个 ':' 属于盘符，
      按它切只会得到 "C"，后面全盘皆输。 */
-
   q = wszLine;
 
   /* 从行首解析「文件名 + 行号」。
@@ -122,7 +111,6 @@ static void RegisterLine(int idx, const WCHAR *wszLine)
         break;
       }
     }
-
     if (pBest) {
       cch = (int)(pBest - q);
       if (cch > MAX_PATH - 1)
@@ -137,22 +125,18 @@ static void RegisterLine(int idx, const WCHAR *wszLine)
       pStop = q;
     }
   }
-
 have_stop:
   if (*pStop == L':') {
     iLine = (int)wcstol(pStop + 1,&pEnd,10);
     if (pEnd && pEnd != pStop + 1)
       bOk = TRUE;
   }
-
   else if (*pStop == L'(') {
     iLine = (int)wcstol(pStop + 1,&pEnd,10);
     if (pEnd && *pEnd == L',')
       bOk = TRUE;
   }
-
   /* 文件名里得带 '.' 或路径分隔，否则 "12:xx" 这类数字前缀会误判 */
-
   if (bOk && cch > 0 && iLine > 0 &&
       (StrChr(wszFile,L'.') || StrChr(wszFile,L'\\') ||
        StrChr(wszFile,L'/')))
@@ -162,44 +146,52 @@ have_stop:
     p->iLine = iLine;
   }
 }
-
 /* ---------------------------------------------------------------------------
    子类化输出框：双击某行时，把该行索引发给主窗口去跳转。
 --------------------------------------------------------------------------- */
-
 static LRESULT CALLBACK OutputEditProc(HWND hwnd, UINT umsg,
                                        WPARAM wParam, LPARAM lParam)
 {
   if (umsg == WM_LBUTTONDBLCLK) {
     /* 取当前选区起点所在的行，EDIT 的选区就是 caret 位置 */
-
     DWORD dwStart = 0, dwEnd = 0;
     SendMessage(hwnd,EM_GETSEL,(WPARAM)&dwStart,(LPARAM)&dwEnd);
     {
       int iLine = (int)SendMessage(hwnd,EM_LINEFROMCHAR,(WPARAM)dwStart,0);
       PostMessage(GetParent(hwnd),WM_APP_OUTPUT_GOTO,0,(LPARAM)iLine);
     }
-
     return 0;
   }
-
   return CallWindowProc(g_pfnEditProc,hwnd,umsg,wParam,lParam);
 }
 
+
+/* ---------------------------------------------------------------------------
+   子类化命令框：回车直接运行，不用离开键盘去点按钮。
+--------------------------------------------------------------------------- */
+static LRESULT CALLBACK OutputComboProc(HWND hwnd, UINT umsg,
+                                        WPARAM wParam, LPARAM lParam)
+{
+  if (umsg == WM_KEYDOWN && wParam == VK_RETURN) {
+    HWND hwndPanel = GetParent(hwnd);
+    if (hwndPanel)
+      PostMessage(hwndPanel,WM_COMMAND,
+                  MAKEWPARAM(IDC_OUTPUT_RUN,BN_CLICKED),0);
+    return 0;
+  }
+  return CallWindowProc(g_pfnComboProc,hwnd,umsg,wParam,lParam);
+}
 /* ---------------------------------------------------------------------------
    面板过程
 --------------------------------------------------------------------------- */
-
 /* ---------------------------------------------------------------------------
    跨线程追加文本。
    读取线程不能直接 SendMessage 给 EDIT —— 那会与主线程的等待循环互相
    阻塞（读线程等主线程泵消息，主线程等读线程结束）。改为 PostMessage
    异步投递，由主线程在自己的消息循环里落地。
 --------------------------------------------------------------------------- */
-
 typedef struct {
   WCHAR *wsz;      /* 调用方分配、所有权转交 */
-
   BOOL   bNewLine;
 } APPENDMSG;
 static void PostAppend(const WCHAR *wszText, BOOL bNewLine)
@@ -214,7 +206,6 @@ static void PostAppend(const WCHAR *wszText, BOOL bNewLine)
     LocalFree(p);
     return;
   }
-
   lstrcpyW(p->wsz,wszText);
   p->bNewLine = bNewLine;
   if (!PostMessage(g_hwndPanel,WM_APP_OUTPUT,0,(LPARAM)p)) {
@@ -222,9 +213,7 @@ static void PostAppend(const WCHAR *wszText, BOOL bNewLine)
     LocalFree(p);
   }
 }
-
 /* 主线程里真正把文字写进 EDIT，并顺带登记这一行 */
-
 static void HistoryAdd(const WCHAR *wszCmd);
 static void DoAppend(const WCHAR *wszText, BOOL bNewLine)
 {
@@ -234,18 +223,15 @@ static void DoAppend(const WCHAR *wszText, BOOL bNewLine)
     return;
 
   /* 超限时从头砍一半，防止无限增长 */
-
   iLen = GetWindowTextLength(g_hwndEdit);
   if (iLen > OUTPUT_MAX_TEXT) {
     SendMessage(g_hwndEdit,EM_SETSEL,0,OUTPUT_MAX_TEXT / 2);
     SendMessage(g_hwndEdit,EM_REPLACESEL,TRUE,(LPARAM)L"");
     iLen = GetWindowTextLength(g_hwndEdit);
   }
-
   /* 本行索引：新文字总是追加在末尾。末尾字符所在行号 +1 ——
      缓冲区以换行结尾时（每次都补 CRLF），末尾字符属于上一行，
      新文字从下一行开始，所以要 +1。 */
-
   iLineIdx = 0;
   if (iLen > 0)
     iLineIdx = (int)SendMessage(g_hwndEdit,EM_LINEFROMCHAR,(WPARAM)(iLen - 1),0) + 1;
@@ -254,63 +240,128 @@ static void DoAppend(const WCHAR *wszText, BOOL bNewLine)
     SendMessage(g_hwndEdit,EM_REPLACESEL,FALSE,(LPARAM)L"\r\n");
   RegisterLine(iLineIdx,wszText);
 }
-
 static void EnableButtons(BOOL bRunning)
 {
   EnableWindow(GetDlgItem(g_hwndPanel,IDC_OUTPUT_RUN), !bRunning);
   EnableWindow(GetDlgItem(g_hwndPanel,IDC_OUTPUT_STOP), bRunning);
 }
-
 static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
                                       WPARAM wParam, LPARAM lParam)
 {
   switch (umsg) {
     case WM_CREATE: {
-      HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+      HDC hdc;
+      HFONT hFont;
+      LOGFONTW lf;
+
       g_hwndPanel = hwnd;
+
+      /* 顶部信息条：告诉用户 %FILE% 当前指向谁，免得猜 */
+      g_hwndStatus = CreateWindowEx(0,L"STATIC",NULL,
+                       WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP | SS_ENDELLIPSIS,
+                       0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_STATUS,g_hinst,NULL);
+
       g_hwndCombo = CreateWindowEx(0,L"COMBOBOX",NULL,
                      WS_CHILD | WS_VISIBLE | CBS_DROPDOWN | CBS_AUTOHSCROLL |
                      WS_VSCROLL | WS_TABSTOP,
                      0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_CMD,g_hinst,NULL);
+
       CreateWindowEx(0,L"BUTTON",L"运行",
                      WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
                      0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_RUN,g_hinst,NULL);
+
+      /* 停止按钮初始禁用 —— 没命令在跑时点了没意义，禁用比点了没反应好 */
       CreateWindowEx(0,L"BUTTON",L"停止",
-                     WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+                     WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP |
+                     WS_DISABLED,
                      0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_STOP,g_hinst,NULL);
+
       CreateWindowEx(0,L"BUTTON",L"清空",
                      WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
                      0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_CLEAR,g_hinst,NULL);
+
       g_hwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE,L"EDIT",NULL,
                     WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE |
                     ES_READONLY | ES_AUTOVSCROLL,
                     0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_LOG,g_hinst,NULL);
 
-      /* 子类化输出框，捕获双击以跳转到错误行 */
-
+      /* 子类化输出框：捕获双击跳转 + 回车直接运行命令 */
       g_pfnEditProc = (WNDPROC)SetWindowLongPtr(g_hwndEdit,GWLP_WNDPROC,
                                                (LONG_PTR)OutputEditProc);
-      SendMessage(g_hwndCombo,WM_SETFONT,(WPARAM)hFont,FALSE);
-      SendMessage(g_hwndEdit, WM_SETFONT,(WPARAM)hFont,FALSE);
+      g_pfnComboProc = (WNDPROC)SetWindowLongPtr(g_hwndCombo,GWLP_WNDPROC,
+                                                 (LONG_PTR)OutputComboProc);
+
+      /* 界面字体：跟随系统，和主程序其他控件一致 */
+      hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+      SendMessage(g_hwndStatus,WM_SETFONT,(WPARAM)hFont,FALSE);
+      SendMessage(g_hwndCombo, WM_SETFONT,(WPARAM)hFont,FALSE);
+      SendMessage(GetDlgItem(hwnd,IDC_OUTPUT_RUN),  WM_SETFONT,(WPARAM)hFont,FALSE);
+      SendMessage(GetDlgItem(hwnd,IDC_OUTPUT_STOP), WM_SETFONT,(WPARAM)hFont,FALSE);
+      SendMessage(GetDlgItem(hwnd,IDC_OUTPUT_CLEAR),WM_SETFONT,(WPARAM)hFont,FALSE);
+
+      /* 输出区用等宽字体：错误信息的
+            foo.c:7:5: error: ...
+               7 |     return a;
+                 |     ^~~
+         列号、插入符才能对齐，否则一片散沙。取不到 Consolas 就用系统等宽。 */
+      hdc = GetDC(hwnd);
+      memset(&lf,0,sizeof(lf));
+      lf.lfHeight = -MulDiv(9,GetDeviceCaps(hdc,LOGPIXELSY),72);
+      lf.lfWeight = FW_NORMAL;
+      lf.lfCharSet = DEFAULT_CHARSET;
+      lf.lfQuality = CLEARTYPE_QUALITY;
+      lstrcpyW(lf.lfFaceName,L"Consolas");
+      g_hFontMono = CreateFontIndirectW(&lf);
+      if (!g_hFontMono) {
+        /* 回退：等宽字体（中英文都存在的选择） */
+        lstrcpyW(lf.lfFaceName,L"Courier New");
+        g_hFontMono = CreateFontIndirectW(&lf);
+      }
+      ReleaseDC(hwnd,hdc);
+      if (g_hFontMono)
+        SendMessage(g_hwndEdit,WM_SETFONT,(WPARAM)g_hFontMono,FALSE);
+
+      Output_RefreshStatus();
       return 0;
     }
 
     case WM_SIZE: {
       int cx = LOWORD(lParam);
       int cy = HIWORD(lParam);
-      int hRow = 22;
+      int y = 0;
+      int hStatus = 18;
+      int hRow = 24;
+
+      /* 状态条 */
+      if (g_hwndStatus)
+        MoveWindow(g_hwndStatus,4,y,cx - 8,hStatus,TRUE);
+      y += hStatus;
+
+      /* 命令行 + 按钮 */
       if (g_hwndCombo)
-        MoveWindow(g_hwndCombo,0,0,cx - 3 * 60 - 12,hRow,TRUE);
+        MoveWindow(g_hwndCombo,4,y,cx - 3 * 62 - 16,hRow - 2,TRUE);
       if (GetDlgItem(hwnd,IDC_OUTPUT_RUN))
-        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_RUN),cx - 3*60 - 8,0,56,hRow,TRUE);
+        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_RUN),cx - 3*62 - 10,y,58,hRow - 2,TRUE);
       if (GetDlgItem(hwnd,IDC_OUTPUT_STOP))
-        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_STOP),cx - 2*60 - 4,0,56,hRow,TRUE);
+        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_STOP),cx - 2*62 - 6,y,58,hRow - 2,TRUE);
       if (GetDlgItem(hwnd,IDC_OUTPUT_CLEAR))
-        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_CLEAR),cx - 60,0,56,hRow,TRUE);
+        MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_CLEAR),cx - 62 - 2,y,58,hRow - 2,TRUE);
+      y += hRow;
+
+      /* 输出区占剩下的全部 */
       if (g_hwndEdit)
-        MoveWindow(g_hwndEdit,0,hRow + 4,cx,cy - hRow - 4,TRUE);
+        MoveWindow(g_hwndEdit,2,y,cx - 4,cy - y - 2,TRUE);
       return 0;
     }
+
+    case WM_CTLCOLORSTATIC:
+      /* 状态条用父窗口的面色，文字用灰色，不抢焦点 */
+      if ((HWND)lParam == g_hwndStatus) {
+        SetBkMode((HDC)wParam,TRANSPARENT);
+        SetTextColor((HDC)wParam,GetSysColor(COLOR_GRAYTEXT));
+        return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
+      }
+      break;
 
     case WM_COMMAND:
       switch (LOWORD(wParam)) {
@@ -322,7 +373,6 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
           Output_Run(wszCmd);
           return 0;
         }
-
         case IDC_OUTPUT_STOP:
           Output_Stop();
           return 0;
@@ -333,11 +383,10 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
           memset(g_aLines,0,sizeof(g_aLines));
           return 0;
       }
-
       break;
+
     case WM_APP_OUTPUT: {
       /* 读取线程投递过来的文本：在这里落地，然后释放 */
-
       APPENDMSG *p = (APPENDMSG*)lParam;
       if (p) {
         if (p->wsz)
@@ -346,13 +395,11 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
           LocalFree(p->wsz);
         LocalFree(p);
       }
-
       return 0;
     }
 
     case WM_APP_OUTPUT_GOTO: {
       /* 双击了某一行，转成主窗口的命令（lParam = 行索引） */
-
       HWND hwndOwner = GetParent(hwnd);
       if (hwndOwner)
         PostMessage(hwndOwner,WM_COMMAND,
@@ -362,15 +409,18 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
 
     case WM_DESTROY:
       Output_Stop();
+      if (g_hFontMono) {
+        DeleteObject(g_hFontMono);
+        g_hFontMono = NULL;
+      }
       g_hwndPanel = NULL;
       g_hwndEdit  = NULL;
       g_hwndCombo = NULL;
+      g_hwndStatus = NULL;
       return 0;
   }
-
   return DefWindowProc(hwnd,umsg,wParam,lParam);
 }
-
 /* ---------------------------------------------------------------------------
    读取线程：把管道里的字节按行切出，转成宽字符后追加到输出框，
    同时登记每行是否可跳转。
@@ -395,25 +445,21 @@ static int DecodeOutputLine(const char *sz, int n, WCHAR *wsz, int cchOut)
     wsz[cch] = 0;
     return cch;
   }
-
   /* 控制台代码页 */
   cch = MultiByteToWideChar(GetConsoleOutputCP(),0,sz,n,wsz,cchOut - 1);
   if (cch > 0) {
     wsz[cch] = 0;
     return cch;
   }
-
   /* 系统 ANSI 代码页 */
   cch = MultiByteToWideChar(CP_ACP,0,sz,n,wsz,cchOut - 1);
   if (cch > 0) {
     wsz[cch] = 0;
     return cch;
   }
-
   wsz[0] = 0;
   return 0;
 }
-
 static DWORD WINAPI ReadThreadProc(LPVOID lpParam)
 {
   char   buf[OUTPUT_PIPE_CHUNK];
@@ -437,20 +483,16 @@ static DWORD WINAPI ReadThreadProc(LPVOID lpParam)
           wsz[cch] = L'\0';
           PostAppend(wsz,TRUE);
         }
-
         nLine = 0;
       }
-
       else {
         if (nLine < (int)sizeof(szLine) - 1)
           szLine[nLine++] = c;
       }
     }
-
     if (InterlockedCompareExchange(&g_lCancel,0,0))
       break;
   }
-
   if (nLine > 0) {
     WCHAR wsz[1024];
     int   cch;
@@ -461,10 +503,8 @@ static DWORD WINAPI ReadThreadProc(LPVOID lpParam)
       PostAppend(wsz,TRUE);
     }
   }
-
   return dwTotal ? 1 : 0;
 }
-
 /* ---------------------------------------------------------------------------
    变量替换
    命令里的 %FILE% / %DIR% / %NAME% / %EXT% / %LINE% / %SEL% 在此展开。
@@ -472,16 +512,13 @@ static DWORD WINAPI ReadThreadProc(LPVOID lpParam)
    主窗口通过 Output_SetEditorState 汇报编辑器状态，本模块只知道
    「当前文件路径、光标行、选区」这三组值，不关心编辑器怎么实现。
 --------------------------------------------------------------------------- */
-
 /* 主窗口汇报的编辑器状态 */
-
 static WCHAR wszCurFilePath[MAX_PATH] = L"";
 static int   g_iCurLine = 1;
 static int   g_iSelStart = 0;
 static int   g_iSelEnd   = 0;
 
 /* 当前选中的文字（主窗口提供）。为空表示无选区。 */
-
 static WCHAR wszSelection[4096] = L"";
 void Output_SetEditorState(int iLine, int iSelStart, int iSelEnd)
 {
@@ -489,17 +526,35 @@ void Output_SetEditorState(int iLine, int iSelStart, int iSelEnd)
   g_iSelStart = iSelStart;
   g_iSelEnd   = iSelEnd;
 }
-
 void Output_SetCurrentFile(const WCHAR *wszPath)
 {
   lstrcpyn(wszCurFilePath,wszPath ? wszPath : L"",COUNTOF(wszCurFilePath));
+  Output_RefreshStatus();
 }
 
+
+/*
+  刷新顶部信息条：显示 %FILE% 当前指向哪个文件。
+  没打开文件时提示一句，免得用户对着 %FILE% 发呆。
+*/
+void Output_RefreshStatus(void)
+{
+  WCHAR wszText[MAX_PATH + 64];
+
+  if (!g_hwndStatus || !IsWindow(g_hwndStatus))
+    return;
+
+  if (wszCurFilePath[0])
+    wsprintfW(wszText,L"%%FILE%% = %s",wszCurFilePath);
+  else
+    lstrcpyW(wszText,L"当前没有打开的文件，%FILE% / %DIR% / %NAME% 展开为空");
+
+  SetWindowText(g_hwndStatus,wszText);
+}
 void Output_SetSelection(const WCHAR *wszText)
 {
   lstrcpyn(wszSelection,wszText ? wszText : L"",COUNTOF(wszSelection));
 }
-
 static const WCHAR *CurFileName(void)
 {
   const WCHAR *p = wszCurFilePath;
@@ -508,7 +563,6 @@ static const WCHAR *CurFileName(void)
     return L"";
 
   /* 找最后一个路径分隔符 */
-
   {
     const WCHAR *q = p;
     while (*q) {
@@ -517,12 +571,9 @@ static const WCHAR *CurFileName(void)
       q++;
     }
   }
-
   return pSlash ? pSlash + 1 : p;
 }
-
 /* 展开单个变量到 wszOut；返回是否认识该变量名（不含 %） */
-
 static BOOL ExpandVar(const WCHAR *wszName, int cchName,
                       WCHAR *wszOut, int cchOut)
 {
@@ -532,7 +583,6 @@ static BOOL ExpandVar(const WCHAR *wszName, int cchName,
     lstrcpyn(wszOut,wszCurFilePath,cchOut);
     return TRUE;
   }
-
   if (cchName == 3 && !_wcsnicmp(wszName,L"DIR",3)) {
     lstrcpyn(wszOut,wszCurFilePath,cchOut);
     {
@@ -542,10 +592,8 @@ static BOOL ExpandVar(const WCHAR *wszName, int cchName,
       if (p > wszOut)
         *p = L'\0';
     }
-
     return TRUE;
   }
-
   if (cchName == 4 && !_wcsnicmp(wszName,L"NAME",4)) {
     const WCHAR *p = CurFileName();
     int n = 0;
@@ -553,11 +601,9 @@ static BOOL ExpandVar(const WCHAR *wszName, int cchName,
       wszOut[n] = p[n];
       n++;
     }
-
     wszOut[n] = L'\0';
     return TRUE;
   }
-
   if (cchName == 3 && !_wcsnicmp(wszName,L"EXT",3)) {
     const WCHAR *p = CurFileName();
     const WCHAR *pDot = NULL;
@@ -566,25 +612,20 @@ static BOOL ExpandVar(const WCHAR *wszName, int cchName,
         pDot = p;
       p++;
     }
-
     lstrcpyn(wszOut,pDot ? pDot + 1 : L"",cchOut);
     return TRUE;
   }
-
   if (cchName == 4 && !_wcsnicmp(wszName,L"LINE",4)) {
     wsprintfW(wszNum,L"%d",g_iCurLine);
     lstrcpyn(wszOut,wszNum,cchOut);
     return TRUE;
   }
-
   if (cchName == 3 && !_wcsnicmp(wszName,L"SEL",3)) {
     lstrcpyn(wszOut,wszSelection,cchOut);
     return TRUE;
   }
-
   return FALSE;
 }
-
 /*
   把 wszIn 里的 %VAR% 展开到 wszOut。
   规则：
@@ -592,7 +633,6 @@ static BOOL ExpandVar(const WCHAR *wszName, int cchName,
     %VAR%      → 变量；不认识 VAR 时原样保留（不含 %），并在调试日志里提一句
     孤立的 %   → 原样保留
 */
-
 static void ExpandVariables(const WCHAR *wszIn, WCHAR *wszOut, int cchOut)
 {
   int i = 0, n = 0;
@@ -603,17 +643,13 @@ static void ExpandVariables(const WCHAR *wszIn, WCHAR *wszOut, int cchOut)
       wszOut[n++] = wszIn[i++];
       continue;
     }
-
     /* %% → 百分号 */
-
     if (wszIn[i+1] == L'%') {
       wszOut[n++] = L'%';
       i += 2;
       continue;
     }
-
     /* 找配对的 % */
-
     {
       int j = i + 1;
       int cchName = 0;
@@ -622,10 +658,8 @@ static void ExpandVariables(const WCHAR *wszIn, WCHAR *wszOut, int cchOut)
         j++;
         cchName++;
       }
-
       if (wszIn[j] == L'%' && cchName > 0) {
         /* 完整的一对：尝试展开 */
-
         if (ExpandVar(wszIn + i + 1, cchName, wszVal, COUNTOF(wszVal))) {
           int k;
           /* 原样展开，不自动加引号。
@@ -637,29 +671,22 @@ static void ExpandVariables(const WCHAR *wszIn, WCHAR *wszOut, int cchOut)
           i = j + 1;
           continue;
         }
-
         /* 不认识的变量：原样输出（含百分号），不破坏用户输入 */
-
         wszOut[n++] = wszIn[i];
         i++;
         continue;
       }
-
       /* 没有配对的 %：原样输出 */
-
       wszOut[n++] = wszIn[i++];
     }
   }
-
   wszOut[n] = L'\0';
 }
-
 /* ---------------------------------------------------------------------------
    执行命令（核心）
    流程：建匿名管道 → CreateProcess 重定向 stdout/stderr、stdin 接 NUL
         → 起读取线程 → 等进程结束 → 收尾。
 --------------------------------------------------------------------------- */
-
 void Output_Run(const WCHAR *wszCmd)
 {
   SECURITY_ATTRIBUTES sa;
@@ -676,9 +703,7 @@ void Output_Run(const WCHAR *wszCmd)
     DoAppend(L"已有命令正在运行，请先停止。",TRUE);
     return;
   }
-
   /* 先展开 %FILE% 等变量，展开后的文本才是真正执行的命令行 */
-
   cch = lstrlenW(wszCmd);
   wszExpanded = LocalAlloc(LPTR,(cch * 4 + MAX_PATH + 4096 + 8) * sizeof(WCHAR));
   if (!wszExpanded)
@@ -689,7 +714,6 @@ void Output_Run(const WCHAR *wszCmd)
     LocalFree(wszExpanded);
     return;
   }
-
   lstrcpyW(wszCopy,wszExpanded);
   LocalFree(wszExpanded);
   memset(&sa,0,sizeof(sa));
@@ -699,12 +723,10 @@ void Output_Run(const WCHAR *wszCmd)
     goto done;
 
   /* 子进程的 stdout 句柄必须可继承，孙句柄不可继承 */
-
   if (!SetHandleInformation(g_hOutRd,HANDLE_FLAG_INHERIT,0))
     goto done;
 
   /* stdin 接 NUL 设备：交互式程序读不到输入会自行退出 */
-
   hNul = CreateFileW(L"NUL",GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,
                      &sa,OPEN_EXISTING,0,NULL);
   if (hNul == INVALID_HANDLE_VALUE)
@@ -714,10 +736,8 @@ void Output_Run(const WCHAR *wszCmd)
   si.dwFlags     = STARTF_USESTDHANDLES;
   if (hNul)
     si.hStdInput = hNul;              /* stdin 给 NUL：交互程序读不到输入会退出 */
-
   else
     si.hStdInput = INVALID_HANDLE_VALUE;   /* 没有输入可用 */
-
   si.hStdOutput  = hOutWr;
   si.hStdError   = hOutWr;
   InterlockedExchange(&g_lCancel,0);
@@ -730,7 +750,6 @@ void Output_Run(const WCHAR *wszCmd)
   DoAppend(L"--------------------------------------------------",TRUE);
 
   /* 记入历史（用用户原始输入，不存展开后的路径，便于换文件后复用） */
-
   HistoryAdd(wszCmd);
   if (!CreateProcessW(NULL,wszCopy,NULL,NULL,TRUE,
                       CREATE_NO_WINDOW,NULL,NULL,&si,&pi))
@@ -743,21 +762,17 @@ void Output_Run(const WCHAR *wszCmd)
     EnableButtons(FALSE);
     goto done;
   }
-
   g_hProc = pi.hProcess;
   CloseHandle(pi.hThread);
 
   /* 写端交给子进程，本进程不再持有，读取线程读到 EOF 即结束 */
-
   if (hOutWr) {
     CloseHandle(hOutWr);
     hOutWr = NULL;
   }
-
   g_hReadThread = CreateThread(NULL,0,ReadThreadProc,g_hOutRd,0,NULL);
 
   /* 等待进程退出（带取消轮询，最多等到它自己结束） */
-
   for (;;) {
     if (WaitForSingleObject(pi.hProcess,100) == WAIT_OBJECT_0)
       break;
@@ -766,17 +781,14 @@ void Output_Run(const WCHAR *wszCmd)
       break;
     }
   }
-
   GetExitCodeProcess(pi.hProcess,&dwExit);
 
   /* 等读取线程把缓冲区排空 */
-
   if (g_hReadThread) {
     WaitForSingleObject(g_hReadThread,3000);
     CloseHandle(g_hReadThread);
     g_hReadThread = NULL;
   }
-
   {
     WCHAR wszDone[128];
     if (InterlockedCompareExchange(&g_lCancel,0,0))
@@ -785,7 +797,6 @@ void Output_Run(const WCHAR *wszCmd)
       wsprintfW(wszDone,L"[完成] 退出码 %lu",dwExit);
     DoAppend(wszDone,TRUE);
   }
-
   CloseHandle(pi.hProcess);
   g_hProc = NULL;
   g_bRunning = FALSE;
@@ -797,35 +808,29 @@ done:
     CloseHandle(g_hOutRd);
     g_hOutRd = NULL;
   }
-
   if (hOutWr)
     CloseHandle(hOutWr);
   if (hNul)
     CloseHandle(hNul);
 }
-
 void Output_Stop(void)
 {
   InterlockedExchange(&g_lCancel,1);
   if (g_hProc)
     TerminateProcess(g_hProc,1);
 }
-
 void Output_AppendText(const WCHAR *wszText, BOOL bNewLine)
 {
   DoAppend(wszText,bNewLine);
 }
-
 BOOL Output_IsRunning(void)
 {
   return g_bRunning;
 }
-
 HWND Output_GetComboBox(void)
 {
   return g_hwndCombo;
 }
-
 BOOL Output_GetGotoTarget(int idx, WCHAR *wszFile, int cchFile, int *piLine)
 {
   LINEINFO *p;
@@ -838,7 +843,6 @@ BOOL Output_GetGotoTarget(int idx, WCHAR *wszFile, int cchFile, int *piLine)
   *piLine = p->iLine;
   return TRUE;
 }
-
 /* ---------------------------------------------------------------------------
    命令历史持久化（注册表 HKCU）
    存最近 OUTPUT_HISTORY_MAX 条命令：
@@ -864,7 +868,6 @@ static HKEY OpenHistoryKey(BOOL bCreate)
     return NULL;
   return hKey;
 }
-
 static void HistoryLoad(void)
 {
   WCHAR wszKey[32];
@@ -889,10 +892,8 @@ static void HistoryLoad(void)
         == ERROR_SUCCESS && wszCmd[0])
       ComboBox_AddString(g_hwndCombo,wszCmd);
   }
-
   RegCloseKey(hKey);
 }
-
 static void HistoryAdd(const WCHAR *wszCmd)
 {
   WCHAR wszList[OUTPUT_HISTORY_MAX][1024];
@@ -912,7 +913,6 @@ static void HistoryAdd(const WCHAR *wszCmd)
         n++;
     }
   }
-
   for (i = n; i > 0; i--)
     lstrcpyn(wszList[i],wszList[i-1],COUNTOF(wszList[i]));
   lstrcpyn(wszList[0],wszCmd,COUNTOF(wszList[0]));
@@ -935,18 +935,15 @@ static void HistoryAdd(const WCHAR *wszCmd)
     }
     RegCloseKey(hKey);
   }
-
   /* 刷新下拉（内容与注册表一致） */
   ComboBox_ResetContent(g_hwndCombo);
   for (i = 0; i < n; i++)
     ComboBox_AddString(g_hwndCombo,wszList[i]);
   SetWindowText(g_hwndCombo,wszCmd);
 }
-
 /* ---------------------------------------------------------------------------
    模块级初始化与面板创建
 --------------------------------------------------------------------------- */
-
 BOOL Output_Init(HINSTANCE hinst)
 {
   WNDCLASSEX wc;
@@ -964,7 +961,6 @@ BOOL Output_Init(HINSTANCE hinst)
   g_atomClass = RegisterClassEx(&wc);
   return (g_atomClass != 0);
 }
-
 HWND Output_Create(HWND hwndParent, HINSTANCE hinst)
 {
   HWND hwnd;

@@ -27,6 +27,7 @@ extern "C" {
 #define IDC_OUTPUT_STOP   0xE712
 #define IDC_OUTPUT_CLEAR  0xE713
 #define IDC_OUTPUT_LOG    0xE714
+#define IDC_OUTPUT_STATUS 0xE715
 
 /*
   初始化模块。调用一次，在任何其他 Output_* 之前。
@@ -72,6 +73,9 @@ void Output_SetEditorState(int iLine, int iSelStart, int iSelEnd);
   wszPath —— 文件全路径；空串表示尚未保存的新文档
 */
 void Output_SetCurrentFile(const WCHAR *wszPath);
+
+/* 刷新顶部信息条（显示 %FILE% 当前指向）。主窗口切换文件时自动调用。 */
+void Output_RefreshStatus(void);
 
 /* 主窗口在选中文本变化时调用，设置 %SEL% */
 void Output_SetSelection(const WCHAR *wszText);
