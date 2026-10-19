@@ -73,6 +73,7 @@ static int      g_nLines = 0;
 static const WCHAR *CurFileName(void);
 void Output_RefreshStatus(void);
 static void LayoutChildren(HWND hwnd, int cx, int cy);
+static void UpdateDockButton(void);
 
 /* ---------------------------------------------------------------------------
    登记一行：识别「文件:行号」格式，认不出就当普通行。
@@ -493,7 +494,10 @@ static DWORD PanelStyle(void)
   if (g_bFloating)
     return WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME |
            WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN;
-  return WS_CHILD | WS_CLIPCHILDREN;
+  /* WS_VISIBLE 不能少：从浮动切回嵌入时要用 SetWindowLongPtr 整体换样式，
+     不带这一位就等于把窗口藏起来。表现是面板框还在、输出区整个不见了，
+     文本其实还在（EM_GETTEXTLENGTHEX 能读到），纯粹是没显示。 */
+  return WS_CHILD | WS_CLIPCHILDREN | WS_VISIBLE;
 }
 
 
@@ -554,11 +558,20 @@ void Output_SetFloating(BOOL bFloat)
     SetParent(g_hwndPanel, g_hwndOwner);
     SetWindowLongPtr(g_hwndPanel, GWL_STYLE, PanelStyle());
     SetWindowPos(g_hwndPanel, NULL, 0, 0, 0, 0,
-                 SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+                 SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
   }
 
-  /* 主窗口重新布局：嵌入时给它留位置，独立时把那块空间收回来 */
-  SendMessage(g_hwndOwner, WM_SIZE, SIZE_RESTORED, 0);
+  /* 主窗口重新布局：嵌入时给它留位置，独立时把那块空间收回来。
+     lParam 必须是真实客户区尺寸 —— MsgSize() 靠它算布局，
+     传 0 会把整个客户区当成 0x0，所有控件一起被压扁。 */
+  UpdateDockButton();
+
+  {
+    RECT rcClient;
+    GetClientRect(g_hwndOwner, &rcClient);
+    SendMessage(g_hwndOwner, WM_SIZE, SIZE_RESTORED,
+                MAKELONG(rcClient.right, rcClient.bottom));
+  }
 }
 
 
@@ -599,6 +612,21 @@ void Output_GetFloatRect(RECT *prc)
 
 
 /* ---------------------------------------------------------------------------
+   刷新停靠/独立按钮的文案。
+
+   按钮描述的是「点下去会发生什么」，不是当前状态：
+   停靠时显示「独立」，浮动时显示「嵌入」。
+--------------------------------------------------------------------------- */
+static void UpdateDockButton(void)
+{
+  if (!g_hwndPanel || !IsWindow(g_hwndPanel))
+    return;
+  SetWindowTextW(GetDlgItem(g_hwndPanel,IDC_OUTPUT_DOCKBTN),
+                 g_bFloating ? L"嵌入" : L"独立");
+}
+
+
+/* ---------------------------------------------------------------------------
    子控件布局。WM_SIZE 和浮动/嵌入切换都调它，避免两套坐标各写一遍。
 --------------------------------------------------------------------------- */
 static void LayoutChildren(HWND hwnd, int cx, int cy)
@@ -612,15 +640,16 @@ static void LayoutChildren(HWND hwnd, int cx, int cy)
   int nBtnW   = 58;
   int nGap    = 4;
   int y       = nPad;
-  int xRun, xStop, xClear;
+  int xRun, xStop, xClear, xDock;
 
   /* 状态条 */
   if (g_hwndStatus)
     MoveWindow(g_hwndStatus,nPad,y,cx - 2 * nPad,hStatus,TRUE);
   y += hStatus + nGap;
 
-  /* 命令行 + 右侧三个按钮，从右往左排 */
-  xClear = cx - nPad - nBtnW;
+  /* 命令行 + 右侧四个按钮，从右往左排 */
+  xDock  = cx - nPad - nBtnW;
+  xClear = xDock  - nGap - nBtnW;
   xStop  = xClear - nGap - nBtnW;
   xRun   = xStop  - nGap - nBtnW;
   if (g_hwndCombo)
@@ -631,6 +660,8 @@ static void LayoutChildren(HWND hwnd, int cx, int cy)
     MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_STOP),xStop,y,nBtnW,hRow - 2,TRUE);
   if (GetDlgItem(hwnd,IDC_OUTPUT_CLEAR))
     MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_CLEAR),xClear,y,nBtnW,hRow - 2,TRUE);
+  if (GetDlgItem(hwnd,IDC_OUTPUT_DOCKBTN))
+    MoveWindow(GetDlgItem(hwnd,IDC_OUTPUT_DOCKBTN),xDock,y,nBtnW,hRow - 2,TRUE);
   y += hRow;
 
   /* 输出区占剩下的全部 */
@@ -677,15 +708,30 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
                      WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
                      0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_CLEAR,g_hinst,NULL);
 
+      /* 停靠 / 独立 切换。文案在 UpdateDockButton() 里按状态刷，
+         这里先给个占位。 */
+      CreateWindowEx(0,L"BUTTON",L"独立",
+                     WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+                     0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_DOCKBTN,g_hinst,NULL);
+
       /* 输出区：用 RichEdit 而不是 EDIT —— 只有 RichEdit 能逐段上色，
          才能还原 gcc / git / ls 的 ANSI 颜色。
          必须加载 msftedit.dll，否则 MSFTEDIT_CLASS 建不出来。 */
       LoadLibraryW(L"Msftedit.dll");
+      /* 样式里不要 ES_AUTOHSCROLL / WS_HSCROLL —— 那会变成横向滚动条，
+         长行看不到尾巴。RichEdit 的换行由 EM_SETTARGETDEVICE 控制，
+         这两个样式对 RichEdit 本来也不起作用，留着只会误导。 */
       g_hwndEdit = CreateWindowExW(WS_EX_CLIENTEDGE,MSFTEDIT_CLASS,NULL,
-                    WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
-                    ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL |
+                    WS_CHILD | WS_VISIBLE | WS_VSCROLL |
+                    ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL |
                     ES_NOHIDESEL,
                     0,0,0,0,hwnd,(HMENU)IDC_OUTPUT_LOG,g_hinst,NULL);
+
+      /* 自动换行：EM_SETTARGETDEVICE 的 (0,0) 表示「按控件宽度折行」。
+         (0,1) 才是「整行不换行、横向滚动」。RichEdit 的折行是显示层的，
+         不改变逻辑行号，所以 RegisterLine 登记的跳转索引不受影响。 */
+      if (g_hwndEdit)
+        SendMessage(g_hwndEdit,EM_SETTARGETDEVICE,(WPARAM)NULL,(LPARAM)0);
 
       /* 子类化输出框：捕获双击跳转 + 回车直接运行命令 */
       if (g_hwndEdit) {
@@ -702,6 +748,7 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
       SendMessage(GetDlgItem(hwnd,IDC_OUTPUT_RUN),  WM_SETFONT,(WPARAM)hFont,FALSE);
       SendMessage(GetDlgItem(hwnd,IDC_OUTPUT_STOP), WM_SETFONT,(WPARAM)hFont,FALSE);
       SendMessage(GetDlgItem(hwnd,IDC_OUTPUT_CLEAR),WM_SETFONT,(WPARAM)hFont,FALSE);
+      SendMessage(GetDlgItem(hwnd,IDC_OUTPUT_DOCKBTN),WM_SETFONT,(WPARAM)hFont,FALSE);
 
       /* 输出区用等宽字体：错误信息的
             foo.c:7:5: error: ...
@@ -793,6 +840,14 @@ static LRESULT CALLBACK OutputWndProc(HWND hwnd, UINT umsg,
         case IDC_OUTPUT_STOP:
           Output_Stop();
           return 0;
+        case IDC_OUTPUT_DOCKBTN:
+          /* 交给主窗口处理：它负责同步 bOutputFloating、分隔条、
+             菜单勾选和 ini 落盘。面板自己只管发请求。 */
+          if (g_hwndOwner)
+            PostMessage(g_hwndOwner,WM_COMMAND,
+                        MAKEWPARAM(g_bFloating ? IDM_OUTPUT_DOCK : IDM_OUTPUT_FLOAT,0),0);
+          return 0;
+
         case IDC_OUTPUT_CLEAR:
           if (g_hwndEdit) {
             SetWindowText(g_hwndEdit,L"");

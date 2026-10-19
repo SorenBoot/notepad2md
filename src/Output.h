@@ -31,6 +31,7 @@ extern "C" {
 #define IDC_OUTPUT_CLEAR  0xE713
 #define IDC_OUTPUT_LOG    0xE714
 #define IDC_OUTPUT_STATUS 0xE715
+#define IDC_OUTPUT_DOCKBTN 0xE717   /* 停靠/独立切换按钮 */
 
 /*
   初始化模块。调用一次，在任何其他 Output_* 之前。
