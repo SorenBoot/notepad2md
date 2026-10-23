@@ -1034,7 +1034,7 @@ KEYWORDLIST KeyWords_LOG = {
 "", "", "", "", "", "", "", "", "" };
 
 
-EDITLEXER lexLOG = { SCLEX_LOG, 63025, L"Log", L"log; logfile; syslog; messages; nginx; out", L"", &KeyWords_LOG, {
+EDITLEXER lexLOG = { SCLEX_LOG, 63025, L"Log", L"log; logfile", L"", &KeyWords_LOG, {
                       { STYLE_DEFAULT, 63269, L"Default", L"", L"" },
                       { SCE_LOG_DATE, 63270, L"Date/Time", L"fore:#008080", L"" },
                       { SCE_LOG_LEVEL_FATAL, 63271, L"Level: Fatal", L"bold; fore:#FFFFFF; back:#B00020", L"" },
@@ -1254,6 +1254,41 @@ void Style_Load()
     }
   }
   LocalFree(pIniSection);
+
+  /* 一次性迁移：老版本把 .log 归在「Default Text」下，用户在 ini 里缓存了
+     那份 FileNameExtensions。不搬走的话 .log 会静默继续走默认方案，
+     日志配色完全不显示，而且没有任何提示。
+     只在确实缓存了（且含 log）时才动，不打扰没配过的人。 */
+  if (lstrcmpi(pLexArray[iDefaultLexer]->pszName,L"Default Text") == 0) {
+    LPWSTR p = pLexArray[iDefaultLexer]->szExtensions;
+    if (StrStrI(p,L"log")) {
+      WCHAR wch[128];
+      int  j = 0;
+      ZeroMemory(wch,sizeof(wch));
+      while (*p) {
+        LPWSTR pEnd;
+        int   cbTok;
+        while (*p == L';' || *p == L' ') p++;
+        if (!*p) break;
+        pEnd = p;
+        while (*pEnd && *pEnd != L';') pEnd++;
+        cbTok = (int)(pEnd - p);
+        while (cbTok > 0 && (p[cbTok-1] == L' ' || p[cbTok-1] == L'.')) cbTok--;
+        if (cbTok > 0 && StrCmpNI(p,L"log",cbTok) != 0) {
+          if (j > 0) wch[j++] = L';';
+          if (j + cbTok < COUNTOF(wch)) {
+            CopyMemory(wch + j,p,(size_t)cbTok * sizeof(WCHAR));
+            j += cbTok;
+          }
+        }
+        p = (*pEnd == L';') ? pEnd + 1 : pEnd;
+      }
+      if (j > 0) {
+        wch[j] = L'\0';
+        lstrcpy(pLexArray[iDefaultLexer]->szExtensions,wch);
+      }
+    }
+  }
 }
 
 
@@ -2006,6 +2041,11 @@ void Style_SetLexerFromFile(HWND hwnd,LPCWSTR lpszFile)
       static const LPCWSTR aMiscNames[] = {
         L"dockerfile", L"containerfile", NULL
       };
+      /* 无扩展名的日志：/var/log/messages、/var/log/syslog、dmesg 输出 */
+      static const LPCWSTR aLogNames[] = {
+        L"messages", L"syslog", L"dmesg", L"kern", L"auth",
+        L"daemon", L"debug", L"mail.log", L"boot.log", NULL
+      };
       static const LPCWSTR aKeyValueNames[] = {
         L"procfile", L"gemfile", L"rakefile", NULL
       };
@@ -2021,6 +2061,16 @@ void Style_SetLexerFromFile(HWND hwnd,LPCWSTR lpszFile)
         for (k = 0; aCfgNames[k]; k++) {
           if (lstrcmpi(lpszName,aCfgNames[k]) == 0) {
             pLexNew = &lexCONF;
+            bFound = TRUE;
+            break;
+          }
+        }
+      }
+      if (!bFound) {
+        for (k = 0; aLogNames[k]; k++) {
+          if (lstrcmpi(lpszName,aLogNames[k]) == 0) {
+            // /var/log/messages 这类没有扩展名的日志
+            pLexNew = &lexLOG;
             bFound = TRUE;
             break;
           }

@@ -131,6 +131,13 @@ probe("a.log", b"2024-01-01 10:00:00 INFO hello\n"
 probe("a.rs", b"fn main() {}\n", 3)
 probe("a.sql", b"select 1;\n", 7)
 
+# 无扩展名的日志文件名
+for nm in ("messages", "syslog", "dmesg", "boot.log"):
+    probe(nm, b"2024-01-01 10:00:00 INFO x\n", 101)
+
+# 不误伤：普通 txt 不该被当成日志
+probe("a.txt", b"hello\n", 1)   # SCLEX_NULL = Default Text
+
 nfail = sum(1 for _, ok in RESULTS if not ok)
 print("\nGUI 探针: 通过 %d, 失败 %d" % (len(RESULTS) - nfail, nfail))
 sys.exit(0 if nfail == 0 else 1)
