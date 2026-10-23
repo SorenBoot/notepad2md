@@ -4955,6 +4955,133 @@ void EditEnsureSelectionVisible(HWND hwnd)
 
 //=============================================================================
 //
+//  EditHiliteSameWord()
+//
+//  双击选词后，把全文档与选区相同的词用 indicator 涂出来。
+//
+//  不限格式：不碰任何 lexer，纯按「词」的边界判断，所以对纯文本、
+//  二进制、日志、代码都一视同仁。选区不是一个完整词（比如选了半个词、
+//  或跨行）就只清除，不多涂。
+//
+//  用 indicator #2：Scintilla 的 #0/#1 被默认值占着（INDIC_SQUIGGLE /
+//  INDIC_TT），项目自己一个都没配置过，取 #2 最安全。
+//
+/* 同词高亮的总开关（Notepad2.c 里的设置项） */
+extern BOOL bHiliteWord;
+
+#define FMT_WORD_INDICATOR  2
+#define WORD_MAX_LEN        128
+
+void EditHiliteSameWord(HWND hwnd)
+{
+  int iStart, iEnd, iWordStart, iWordEnd, cbLen, iPos;
+  char szWord[WORD_MAX_LEN + 4];
+  /* 关掉功能时清干净就走 */
+  if (!bHiliteWord) {
+    SendMessage(hwnd,SCI_SETINDICATORCURRENT,FMT_WORD_INDICATOR,0);
+    SendMessage(hwnd,SCI_INDICATORCLEARRANGE,0,
+                (LPARAM)SendMessage(hwnd,SCI_GETLENGTH,0,0));
+    return;
+  }
+
+  iStart = (int)SendMessage(hwnd,SCI_GETSELECTIONSTART,0,0);
+  iEnd   = (int)SendMessage(hwnd,SCI_GETSELECTIONEND,0,0);
+
+  /* 只处理单选区：矩形/多选区时词的概念不明确，直接清除 */
+  if (iStart >= iEnd ||
+      SendMessage(hwnd,SCI_GETSELECTIONS,0,0) > 1 ||
+      SendMessage(hwnd,SCI_GETSELECTIONMODE,0,0) == SC_SEL_RECTANGLE) {
+    SendMessage(hwnd,SCI_SETINDICATORCURRENT,FMT_WORD_INDICATOR,0);
+    SendMessage(hwnd,SCI_INDICATORCLEARRANGE,0,
+                (LPARAM)SendMessage(hwnd,SCI_GETLENGTH,0,0));
+    return;
+  }
+
+  cbLen = iEnd - iStart;
+  if (cbLen <= 0 || cbLen > WORD_MAX_LEN) {
+    SendMessage(hwnd,SCI_SETINDICATORCURRENT,FMT_WORD_INDICATOR,0);
+    SendMessage(hwnd,SCI_INDICATORCLEARRANGE,0,
+                (LPARAM)SendMessage(hwnd,SCI_GETLENGTH,0,0));
+    return;
+  }
+
+  /* 选区必须恰好是一个完整的词：往前扩到词首、往后扩到词尾，
+     边界必须正好落在选区两端，否则就是选了半个词或跨了词。 */
+  /* 选区必须恰好是一个完整的词。
+     注意 Scintilla 的语义：WORDENDPOSITION(pos) 是「从 pos 往后找到词尾」，
+     WORDSTARTPOSITION(pos) 是「从 pos 往前找到词首」，两者都以 pos 自身为基准。
+     所以对选区 [iStart, iEnd) 要拿 iStart 求词尾、拿 iEnd-1 求词首，
+     两头都正好落在选区边界上才算完整选中一个词。 */
+  iWordStart = (int)SendMessage(hwnd,SCI_WORDSTARTPOSITION,(WPARAM)(iEnd - 1),0);
+  iWordEnd   = (int)SendMessage(hwnd,SCI_WORDENDPOSITION,(WPARAM)iStart,0);
+  if (iWordStart != iStart || iWordEnd != iEnd) {
+    SendMessage(hwnd,SCI_SETINDICATORCURRENT,FMT_WORD_INDICATOR,0);
+    SendMessage(hwnd,SCI_INDICATORCLEARRANGE,0,
+                (LPARAM)SendMessage(hwnd,SCI_GETLENGTH,0,0));
+    return;
+  }
+
+  /* 取出词内容。逐字取，避免为了一个词分配一块缓冲区 */
+  {
+    struct TextRange tr;
+    tr.chrg.cpMin = iStart;
+    tr.chrg.cpMax = iEnd;
+    tr.lpstrText  = szWord;
+    if (SendMessage(hwnd,SCI_GETTEXTRANGE,0,(LPARAM)&tr) <= 0)
+      return;
+  }
+  szWord[cbLen] = '\0';
+
+  /* 配置一次 indicator：淡黄底、半透明，像常见编辑器的同词高亮 */
+  SendMessage(hwnd,SCI_INDICSETSTYLE,FMT_WORD_INDICATOR,INDIC_ROUNDBOX);
+  SendMessage(hwnd,SCI_INDICSETFORE,FMT_WORD_INDICATOR,(LPARAM)RGB(255,200,0));
+  SendMessage(hwnd,SCI_INDICSETALPHA,FMT_WORD_INDICATOR,120);
+  SendMessage(hwnd,SCI_INDICSETUNDER,FMT_WORD_INDICATOR,1);
+
+  /* 先清后涂：清除整篇是 O(文档长)，但只有一条消息，比逐段快。
+     SETINDICATORVALUE 不能省：DecorationFillRange 用的是"当前值"，
+     默认 0，不设成非 0 的话 FILLRANGE 写进去也是 0，等于没涂。 */
+  SendMessage(hwnd,SCI_SETINDICATORCURRENT,FMT_WORD_INDICATOR,0);
+  SendMessage(hwnd,SCI_SETINDICATORVALUE,1,0);
+  SendMessage(hwnd,SCI_INDICATORCLEARRANGE,0,
+              (LPARAM)SendMessage(hwnd,SCI_GETLENGTH,0,0));
+
+  /* 全文搜索同词。用 Scintilla 自己的 target 搜索，天然支持
+     正则开关与大小写设置；这里用整词匹配（\b 由前后非词字符保证）。 */
+  iPos = 0;
+  while (iPos < (int)SendMessage(hwnd,SCI_GETLENGTH,0,0)) {
+    struct TextToFind ttf;
+    int iFound;
+
+    ttf.chrg.cpMin = iPos;
+    ttf.chrg.cpMax = (int)SendMessage(hwnd,SCI_GETLENGTH,0,0);
+    ttf.lpstrText  = szWord;
+
+    iFound = (int)SendMessage(hwnd,SCI_FINDTEXT,0,(LPARAM)&ttf);
+    if (iFound < 0)
+      break;
+
+    /* 确认是整词：用 Scintilla 自己的词边界判断，别自己维护一份
+       词字符表（用户可以通过 SCI_SETWORDCHARS 改）。 */
+    {
+      int iPrevEnd, iNextEnd;
+
+      iPrevEnd = (int)SendMessage(hwnd,SCI_WORDENDPOSITION,(WPARAM)(iFound - 1),0);
+      iNextEnd = (int)SendMessage(hwnd,SCI_WORDENDPOSITION,(WPARAM)(iFound + cbLen),0);
+
+      /* iFound-1 处的词尾必须正好落在 iFound（说明前一个字符不是词字符），
+         iFound+cbLen 处必须还能往后扩（说明后一个字符也不是词字符）。 */
+      if (iPrevEnd == iFound && iNextEnd > iFound + cbLen)
+        SendMessage(hwnd,SCI_INDICATORFILLRANGE,(WPARAM)iFound,(LPARAM)cbLen);
+    }
+
+    iPos = iFound + cbLen;
+  }
+}
+
+
+//=============================================================================
+//
 //  EditGetExcerpt()
 //
 void EditGetExcerpt(HWND hwnd,LPWSTR lpszExcerpt,DWORD cchExcerpt)

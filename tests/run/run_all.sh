@@ -1,6 +1,6 @@
 #!/bin/sh
 # 一条命令跑完全部自动化测试（rc 编码 / 词法器 / 格式化引擎 / 格式识别 /
-# 运行命令 / 格式化 E2E / 预览）
+# 日志接线 / 大日志 / 同词高亮 / 运行命令 / 格式化 E2E / 预览）
 #
 # 用法：
 #   sh tests/run/run_all.sh               # 用 bin_new/notepad2md.exe
@@ -19,20 +19,20 @@ FAIL=0
 
 # 第 0 步：.rc 分块编码（2 秒，纯静态检查，不依赖 exe）。
 # 放最前面：编码写错会让所有界面文字变乱码，而编译照样通过。
-echo "======== 0/9 rc 分块编码校验 ========"
+echo "======== 0/10 rc 分块编码校验 ========"
 python3 tests/run/check_rc_encoding.py || FAIL=1
 
-echo "======== 1/9 词法器单元测试（不依赖 GUI） ========"
+echo "======== 1/10 词法器单元测试（不依赖 GUI） ========"
 g++ -O1 -w -o /tmp/lexer_test tests/run/test_lexers.cxx scintilla/lexlib/WordList.cxx \
     -I tests/run/lexfake -I scintilla/include -I scintilla/lexlib || FAIL=1
 /tmp/lexer_test || FAIL=1
 
-echo "======== 2/9 日志词法器单元测试（不依赖 GUI） ========"
+echo "======== 2/10 日志词法器单元测试（不依赖 GUI） ========"
 g++ -O1 -w -o /tmp/log_lexer_test tests/run/test_log.cxx scintilla/lexlib/WordList.cxx \
     -I tests/run/lexfake -I scintilla/include -I scintilla/lexlib || FAIL=1
 /tmp/log_lexer_test || FAIL=1
 
-echo "======== 3/9 格式化引擎单元测试（不依赖 GUI） ========"
+echo "======== 3/10 格式化引擎单元测试（不依赖 GUI） ========"
 gcc -O1 -Wall -Wextra -Wno-unused-parameter -std=c99 \
     -o /tmp/format_test tests/run/test_format.c \
     src/Format.c src/Format_Json.c src/Format_Xml.c src/Format_Sql.c src/Format_Ini.c \
@@ -40,22 +40,25 @@ gcc -O1 -Wall -Wextra -Wno-unused-parameter -std=c99 \
     -Isrc || FAIL=1
 /tmp/format_test || FAIL=1
 
-echo "======== 4/9 文件格式识别（GUI 探针） ========"
+echo "======== 4/10 文件格式识别（GUI 探针） ========"
 python3 tests/run/test_lexer_map.py --exe "$EXE" || FAIL=1
 
-echo "======== 5/9 日志词法器接线（GUI 探针） ========"
+echo "======== 5/10 日志词法器接线（GUI 探针） ========"
 python3 tests/run/test_log_lexer_map.py --exe "$EXE" || FAIL=1
 
-echo "======== 6/9 大日志性能与稳定性 ========"
+echo "======== 6/10 大日志性能与稳定性 ========"
 python3 tests/run/test_log_bigfile.py --exe "$EXE" --mb 20 || FAIL=1
 
-echo "======== 7/9 运行当前文件 E2E ========"
+echo "======== 7/10 同词高亮 E2E ========"
+python3 tests/run/test_hilite_word.py --exe "$EXE" || FAIL=1
+
+echo "======== 8/10 运行当前文件 E2E ========"
 python3 tests/run/e2e_runcmd.py --exe "$EXE" || FAIL=1
 
-echo "======== 8/9 格式化 / 压缩 / 校验 E2E ========"
+echo "======== 9/10 格式化 / 压缩 / 校验 E2E ========"
 python3 tests/run/e2e_format.py --exe "$EXE" || FAIL=1
 
-echo "======== 9/9 预览回归 ========"
+echo "======== 10/10 预览回归 ========"
 python3 tests/run/regress_preview.py --exe "$EXE" || FAIL=1
 
 echo

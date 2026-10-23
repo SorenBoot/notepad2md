@@ -116,6 +116,7 @@ int       iWordWrapIndent;
 int       iWordWrapSymbols;
 BOOL      bShowWordWrapSymbols;
 BOOL      bMatchBraces;
+BOOL      bHiliteWord;      /* 双击选词后高亮全文档同词 */
 BOOL      bAutoIndent;
 BOOL      bAutoCloseTags;
 BOOL      bShowIndentGuides;
@@ -2633,6 +2634,7 @@ void MsgInitMenu(HWND hwnd,WPARAM wParam,LPARAM lParam)
   CheckCmd(hmenu,IDM_VIEW_SHOWEOLS,bViewEOLs);
   CheckCmd(hmenu,IDM_VIEW_WORDWRAPSYMBOLS,bShowWordWrapSymbols);
   CheckCmd(hmenu,IDM_VIEW_MATCHBRACES,bMatchBraces);
+  CheckCmd(hmenu,IDM_VIEW_HILITEWORD,bHiliteWord);
   CheckCmd(hmenu,IDM_VIEW_TOOLBAR,bShowToolbar);
   EnableCmd(hmenu,IDM_VIEW_CUSTOMIZETB,bShowToolbar);
   CheckCmd(hmenu,IDM_VIEW_STATUSBAR,bShowStatusbar);
@@ -4284,6 +4286,14 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
       break;
 
 
+    case IDM_VIEW_HILITEWORD:
+      bHiliteWord = (bHiliteWord) ? FALSE : TRUE;
+      EditHiliteSameWord(hwndEdit);
+      UpdateToolbar();
+      UpdateStatusbar();
+      break;
+
+
     case IDM_VIEW_AUTOCLOSETAGS:
       bAutoCloseTags = (bAutoCloseTags) ? FALSE : TRUE;
       break;
@@ -5418,6 +5428,9 @@ LRESULT MsgNotify(HWND hwnd,WPARAM wParam,LPARAM lParam)
                 }
               }
             }
+
+            /* 双击选词后高亮全文档同词（不限格式）*/
+            EditHiliteSameWord(hwndEdit);
           }
           break;
 
@@ -5765,6 +5778,7 @@ void LoadSettings()
   if (bShowWordWrapSymbols) bShowWordWrapSymbols = 1;
 
   bMatchBraces = IniSectionGetInt(pIniSection,L"MatchBraces",1);
+  bHiliteWord = IniSectionGetInt(pIniSection,L"HiliteWord",0);
   if (bMatchBraces) bMatchBraces = 1;
 
   bAutoCloseTags = IniSectionGetInt(pIniSection,L"AutoCloseTags",0);
@@ -6057,6 +6071,7 @@ void SaveSettings(BOOL bSaveSettingsNow)
   IniSectionSetInt(pIniSection,L"WordWrapSymbols",iWordWrapSymbols);
   IniSectionSetInt(pIniSection,L"ShowWordWrapSymbols",bShowWordWrapSymbols);
   IniSectionSetInt(pIniSection,L"MatchBraces",bMatchBraces);
+  IniSectionSetInt(pIniSection,L"HiliteWord",bHiliteWord);
   IniSectionSetInt(pIniSection,L"AutoCloseTags",bAutoCloseTags);
   IniSectionSetInt(pIniSection,L"HighlightCurrentLine",bHiliteCurrentLine);
   IniSectionSetInt(pIniSection,L"AutoIndent",bAutoIndent);

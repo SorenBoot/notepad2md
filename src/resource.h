@@ -324,6 +324,7 @@
 #define IDM_VIEW_NOSAVEFINDREPL         40439
 #define IDM_VIEW_TOOLBAR                40440
 #define IDM_VIEW_CUSTOMIZETB            40441
+#define IDM_VIEW_HILITEWORD             40450
 #define IDM_VIEW_STATUSBAR              40442
 #define IDM_VIEW_SAVESETTINGS           40443
 #define IDM_VIEW_SAVESETTINGSNOW        40444

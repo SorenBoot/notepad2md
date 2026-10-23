@@ -111,6 +111,7 @@ void  EditJumpTo(HWND,int,int);
 void  EditSelectEx(HWND,int,int);
 void  EditFixPositions(HWND);
 void  EditEnsureSelectionVisible(HWND);
+void  EditHiliteSameWord(HWND);   /* 双击选词后高亮全文档同词（不限格式） */
 void  EditGetExcerpt(HWND,LPWSTR,DWORD);
 
 HWND  EditFindReplaceDlg(HWND,LPCEDITFINDREPLACE,BOOL);
