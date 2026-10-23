@@ -71,7 +71,7 @@ for %%F in (Accessor CharacterSet LexerBase LexerModule LexerSimple PropSetSimpl
     set OBJS=!OBJS! obj\LexLib_%%F.o
 )
 
-for %%F in (LexAsm LexBash LexCPP LexCSS LexConf LexHTML LexMarkdown LexOthers LexPascal LexPerl LexPowerShell LexPython LexSQL LexVB LexYaml) do (
+for %%F in (LexAsm LexBash LexCPP LexCSS LexConf LexHTML LexMarkdown LexOthers LexPascal LexPerl LexPowerShell LexPython LexSQL LexVB LexYaml LexLog) do (
     g++ %DEF% %INC% %OPT% -c ..\scintilla\lexers\%%F.cxx -o obj\Lex_%%F.o || goto :err
     set OBJS=!OBJS! obj\Lex_%%F.o
 )

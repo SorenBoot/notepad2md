@@ -41,7 +41,7 @@ KEYWORDLIST KeyWords_NULL = {
 "", "", "", "", "", "", "", "", "" };
 
 
-EDITLEXER lexDefault = { SCLEX_NULL, 63000, L"Default Text", L"txt; text; wtx; log; asc; doc; diz; nfo", L"", &KeyWords_NULL, {
+EDITLEXER lexDefault = { SCLEX_NULL, 63000, L"Default Text", L"txt; text; wtx; asc; doc; diz; nfo", L"", &KeyWords_NULL, {
                 /*  0 */ { STYLE_DEFAULT, 63100, L"Default Style", L"font:Lucida Console; size:10", L"" },
                 /*  1 */ { STYLE_LINENUMBER, 63101, L"Margins and Line Numbers", L"size:-2; fore:#FF0000", L"" },
                 /*  2 */ { STYLE_BRACELIGHT, 63102, L"Matching Braces", L"size:+1; bold; fore:#FF0000", L"" },
@@ -1029,6 +1029,28 @@ EDITLEXER lexYAML = { SCLEX_YAML, 63024, L"YAML", L"yaml; yml; yamllint", L"", &
                       { -1, 00000, L"", L"", L"" } } };
 
 
+/* 日志：日期时间 + 四档级别 + 数字/IP + 路径 + key=value + 注释 */
+KEYWORDLIST KeyWords_LOG = {
+"", "", "", "", "", "", "", "", "" };
+
+
+EDITLEXER lexLOG = { SCLEX_LOG, 63025, L"Log", L"log; logfile; syslog; messages; nginx; out", L"", &KeyWords_LOG, {
+                      { STYLE_DEFAULT, 63269, L"Default", L"", L"" },
+                      { SCE_LOG_DATE, 63270, L"Date/Time", L"fore:#008080", L"" },
+                      { SCE_LOG_LEVEL_FATAL, 63271, L"Level: Fatal", L"bold; fore:#FFFFFF; back:#B00020", L"" },
+                      { SCE_LOG_LEVEL_ERROR, 63272, L"Level: Error", L"bold; fore:#C00000", L"" },
+                      { SCE_LOG_LEVEL_WARN, 63273, L"Level: Warning", L"bold; fore:#A66000", L"" },
+                      { SCE_LOG_LEVEL_INFO, 63274, L"Level: Info", L"fore:#007A33", L"" },
+                      { SCE_LOG_LEVEL_DEBUG, 63275, L"Level: Debug/Trace", L"fore:#6A6A6A", L"" },
+                      { SCE_LOG_NUMBER, 63276, L"Number/IP", L"fore:#FF0000", L"" },
+                      { SCE_LOG_STRING, 63277, L"String", L"fore:#808000", L"" },
+                      { SCE_LOG_PATH, 63278, L"Path", L"fore:#7A3E9D", L"" },
+                      { SCE_LOG_KEY, 63279, L"Key", L"fore:#0A246A", L"" },
+                      { SCE_LOG_COMMENT, 63280, L"Comment", L"fore:#646464", L"" },
+                      { SCE_LOG_CONTEXT, 63281, L"Thread/Context", L"fore:#3F5F9F", L"" },
+                      { -1, 00000, L"", L"", L"" } } };
+
+
 KEYWORDLIST KeyWords_SH = {
 "if then else elif fi for while until do done in case esac function return select time "
 "break continue exit local export readonly declare typeset unset shift eval exec trap "
@@ -1095,7 +1117,7 @@ EDITLEXER lexRUST = { SCLEX_CPP, 63027, L"Rust", L"rs", L"", &KeyWords_RUST, {
 
 
 // This array holds all the lexers...
-PEDITLEXER pLexArray[NUMLEXERS] =
+PEDITLEXER pLexArray[] =
 {
   &lexDefault,
   &lexHTML,
@@ -1122,10 +1144,19 @@ PEDITLEXER pLexArray[NUMLEXERS] =
   &lexJSON,
   &lexMD,
   &lexYAML,
+  &lexLOG,
   &lexSH,
   &lexGO,
   &lexRUST
 };
+
+/* NUMLEXERS 必须与 pLexArray[] 的实际项数一致。
+   数组这里故意不写长度：写死了的话，多写一项只是编译器一句
+   warning（excess elements in array initializer），sizeof 仍然返回
+   声明的长度，断言就成了摆设 —— 表现是“某个扩展名突然变成默认
+   语法”且毫无提示。不写长度，sizeof 就是真实项数，断言才拦得住。 */
+NUMLEXERS_COMPILE_ASSERT(sizeof(pLexArray) / sizeof(pLexArray[0]) == NUMLEXERS,
+                         pLexArray_count);
 
 
 // Currently used lexer

@@ -108,7 +108,8 @@ SCI_LEXERS := \
 	../scintilla/lexers/LexPython.cxx \
 	../scintilla/lexers/LexSQL.cxx \
 	../scintilla/lexers/LexVB.cxx \
-	../scintilla/lexers/LexYaml.cxx
+	../scintilla/lexers/LexYaml.cxx \
+	../scintilla/lexers/LexLog.cxx \
 
 # Markdown 功能模块（新增）
 MD_SRC := \

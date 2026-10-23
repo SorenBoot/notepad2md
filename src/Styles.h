@@ -55,7 +55,19 @@ typedef struct _editlexer
 
 
 // Number of Lexers in pLexArray
-#define NUMLEXERS 28
+//
+// 这个数必须与 src/Styles.c 里 pLexArray[] 的项数严格一致。
+// 数组是定长的，写小了不会报错，只会把排在前面的 lexer 悄悄挤掉
+// （表现是“某个扩展名突然变成默认语法”），所以下面加了编译期断言。
+#define NUMLEXERS 29
+
+/* pLexArray[] 的项数：用 sizeof 反推，不匹配就编译失败 */
+#if defined(__GNUC__)
+#define NUMLEXERS_COMPILE_ASSERT(cond, name) \
+  typedef char numlexers_assert_##name[(cond) ? 1 : -1]
+#else
+#define NUMLEXERS_COMPILE_ASSERT(cond, name)
+#endif
 
 
 void   Style_Load();
