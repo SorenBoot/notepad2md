@@ -116,6 +116,12 @@ MD_SRC := \
 	../src/Preview.c \
 	../src/Outline.c \
 	../src/RunCmd.c \
+	../src/Format.c \
+	../src/Format_Json.c \
+	../src/Format_Xml.c \
+	../src/Format_Sql.c \
+	../src/Format_Ini.c \
+	../src/FormatCmd.c \
 	../md4c/md4c.c
 
 C_OBJ   := $(N2_C_SRC:.c=.o) $(MD_SRC:.c=.o)

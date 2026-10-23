@@ -38,6 +38,7 @@
 #include "Markdown.h"
 #include "Preview.h"
 #include "Outline.h"
+#include "FormatCmd.h"
 #include "RunCmd.h"
 
 
@@ -3875,6 +3876,15 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
     case IDM_EDIT_URLDECODE:
       BeginWaitCursor();
       EditURLDecode(hwndEdit);
+      EndWaitCursor();
+      break;
+
+
+    case IDM_FORMAT_DOC:
+    case IDM_FORMAT_MINIFY:
+    case IDM_FORMAT_VALIDATE:
+      BeginWaitCursor();
+      FormatDoCmd(hwndEdit,LOWORD(wParam));
       EndWaitCursor();
       break;
 

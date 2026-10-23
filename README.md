@@ -45,6 +45,25 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 - **链接外开** —— 预览里的链接用系统浏览器打开，不在窗格内跳转
 - **安全** —— HTML 标签被转义，预览不执行脚本
 
+**格式整理（JSON / XML / SQL / INI / TOML）**
+
+- 顶层「格式」菜单三项：**格式化**（`Ctrl+Alt+F`）、**压缩**（`Ctrl+Alt+Shift+F`）、**校验**（`Ctrl+Alt+V`）
+- 支持类型：**JSON / JSONC / JSON5 / JSON Lines**、**XML / HTML**、**SQL**、**INI / TOML / .env**
+  —— 按当前文件的语法方案自动选择；拿不准时按内容嗅探
+- **只动空白，不动字节** —— 不解析成对象树再重新序列化，所以键顺序、数字字面形式
+  （`1.0` / `1e3` / `0x1F`）、大整数精度、重复键、Unicode 转义、注释、XML 属性顺序
+  与实体写法全部原样保留
+- **两条可验证的硬不变量**：`压缩(格式化(x))` 与 `压缩(x)` 逐字节相同；
+  `格式化(格式化(x))` 与 `格式化(x)` 逐字节相同（`tests/run/test_format.c` 全文校验）
+- **有选区只处理选区** —— 选中一段 JSON 片段单独整理，其余内容不受影响
+- **行尾沿用文件** —— LF 文件还是 LF，CRLF 文件还是 CRLF；缩进宽度跟随当前的 Tab 设置
+- **一次撤销** —— 整个整理动作是一个撤销步，`Ctrl+Z` 一步回到原样
+- **出错不改文件** —— 语法不合法时原文一个字节都不动，弹窗给出「第几行第几列」并把光标移过去
+- **大文件行为** —— 超过 8 MB 时弹窗确认，16 MB 以上直接拒绝（引擎上限也是 16 MB）
+- **保守的地方是故意的** —— XML 混合内容（`<p>前 <b>粗</b> 后</p>`）、`<pre>` / `<script>` /
+  `xml:space="preserve"`、TOML 多行数组与多行字符串一律原样保留；标签不配对直接报错，
+  绝不猜隐式闭合；YAML 缩进即语义，不提供格式化
+
 **编码处理**
 
 - **打开时自动识别编码** —— 无需手动选择，无 BOM 的 UTF-8、GBK、Big5、Shift-JIS、EUC-KR 均可正确识别
@@ -136,7 +155,13 @@ notepad2md/
 │   ├── Helpers.c         工具函数
 │   ├── Print.cpp         打印
 │   ├── Markdown.c        Markdown 解析（新增）
-│   └── Preview.c         预览渲染（新增）
+│   ├── Preview.c         预览渲染（新增）
+│   ├── Format.c          格式化引擎入口 / 输出器（新增）
+│   ├── Format_Json.c     JSON / JSONC / JSON5 重排（新增）
+│   ├── Format_Xml.c      XML / HTML 重排（新增）
+│   ├── Format_Sql.c      SQL 重排（新增）
+│   ├── Format_Ini.c      INI / TOML / .env 重排（新增）
+│   └── FormatCmd.c       格式化功能的编辑器接线（新增）
 ├── scintilla/            编辑引擎（仅编译必需文件）
 ├── md4c/                 Markdown 解析器（MIT）
 ├── res/                  图标 / 光标 / 位图 / manifest

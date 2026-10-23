@@ -45,8 +45,8 @@ for %%F in (Notepad2 Edit Dialogs Styles Dlapi Helpers) do (
     set OBJS=!OBJS! obj\%%F.o
 )
 
-echo [2/4] 编译 Markdown 模块 ...
-for %%F in (Markdown Preview Outline Output) do (
+echo [2/4] 编译 Markdown / 大纲 / 运行命令 / 格式化模块 ...
+for %%F in (Markdown Preview Outline RunCmd Format Format_Json Format_Xml Format_Sql Format_Ini FormatCmd) do (
     gcc %DEF% %INC% %OPT% -c ..\src\%%F.c -o obj\%%F.o || goto :err
     set OBJS=!OBJS! obj\%%F.o
 )
@@ -71,7 +71,7 @@ for %%F in (Accessor CharacterSet LexerBase LexerModule LexerSimple PropSetSimpl
     set OBJS=!OBJS! obj\LexLib_%%F.o
 )
 
-for %%F in (LexAsm LexCPP LexCSS LexConf LexHTML LexOthers LexPascal LexPerl LexPowerShell LexPython LexSQL LexVB) do (
+for %%F in (LexAsm LexBash LexCPP LexCSS LexConf LexHTML LexMarkdown LexOthers LexPascal LexPerl LexPowerShell LexPython LexSQL LexVB LexYaml) do (
     g++ %DEF% %INC% %OPT% -c ..\scintilla\lexers\%%F.cxx -o obj\Lex_%%F.o || goto :err
     set OBJS=!OBJS! obj\Lex_%%F.o
 )
@@ -93,7 +93,8 @@ echo.
 echo ============================================================
 echo   编译成功 ^!^!
 echo   输出：..\bin\notepad2md.exe
-for %%I in (..\bin\notepad2md.exe) do echo   大小：%%~zI 字节
+echo   生成文件大小（字节）：
+for %%I in (..\bin\notepad2md.exe) do @echo     %%~zI bytes
 echo ============================================================
 pause
 exit /b 0

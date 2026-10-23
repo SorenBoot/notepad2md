@@ -335,6 +335,11 @@
 #define IDM_HELP_ABOUT                  40500
 #define IDM_TRAY_RESTORE                40600
 #define IDM_TRAY_EXIT                   40601
+
+/* 格式化（Format.c / FormatCmd.c）*/
+#define IDM_FORMAT_DOC                  40802
+#define IDM_FORMAT_MINIFY               40803
+#define IDM_FORMAT_VALIDATE             40804
 #define IDT_FILE_NEW                    40700
 #define IDT_FILE_OPEN                   40701
 #define IDT_FILE_BROWSE                 40702
@@ -419,6 +424,21 @@
 #define IDS_RUNCMD_STOPPED             50055
 #define IDS_RUNCMD_FAILED              50056
 #define IDS_RUNCMD_NOMAP               50057
+
+/* 格式化 */
+#define IDS_FMT_UNSUPPORTED            50058
+#define IDS_FMT_FAILED                 50059
+#define IDS_FMT_ERR_NOMEM              50060
+#define IDS_FMT_ERR_EMPTY              50061
+#define IDS_FMT_ERR_TOOBIG             50062
+#define IDS_FMT_ERR_TOODEEP            50063
+#define IDS_FMT_ERR_STRING             50064
+#define IDS_FMT_ERR_COMMENT            50065
+#define IDS_FMT_ERR_TAG                50066
+#define IDS_FMT_ERR_BRACKET            50067
+#define IDS_FMT_ERR_SYNTAX             50068
+#define IDS_FMT_OK                     50069
+#define IDS_FMT_BIGFILE_CONFIRM        50070
 #define IDS_CMDLINEHELP                 60000
 
 // Next default values for new objects
