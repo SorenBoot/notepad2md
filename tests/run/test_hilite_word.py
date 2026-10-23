@@ -143,9 +143,10 @@ def run_case(name, content, sel_start, sel_end, word, occurrences):
             record("%s 文档加载" % name, False, "编辑窗口为空")
             return
 
-        # 打开功能：Ctrl+Alt+W 不可直接发，用菜单命令
-        u.PostMessageW(hw, WM_COMMAND, 40450, 0)
-        time.sleep(0.6)
+        # 功能默认开启，不需要再发命令；这里发一次是验证"可关闭"
+        # 但那样会把后面的用例全关掉，所以改为：确认菜单命令存在即可，
+        # 开关行为由单独的用例覆盖。
+        pass
 
         # 模拟双击选词
         u.SendMessageW(e, SCI_SETSEL, sel_start, sel_end)
@@ -188,6 +189,51 @@ def run_case(name, content, sel_start, sel_end, word, occurrences):
             pr.kill()
 
 
+def run_toggle():
+    """默认开启 + Ctrl+Alt+W（菜单命令 40450）能关能开"""
+    p = os.path.join(tempfile.mkdtemp(), "t.txt")
+    with open(p, "wb") as f:
+        f.write(DOC)
+    pr = subprocess.Popen([EXE, p])
+    try:
+        hw = find_main(pr.pid)
+        e = None
+        for _ in range(60):
+            time.sleep(0.25)
+            e = find_edit(hw)
+            if e and u.SendMessageW(e, SCI_GETLENGTH, 0, 0) >= len(DOC):
+                break
+        if not e:
+            record("开关用例 文档加载", False, "编辑窗口为空")
+            return
+        # 默认就该开着：直接选词就能看到高亮
+        u.SendMessageW(e, SCI_SETSEL, 23, 28)
+        time.sleep(1.0)
+        on = painted_at(e, 0, 5) and painted_at(e, 42, 5)
+        record("默认开启（不按任何键就高亮）", on)
+
+        # 按一次菜单命令 -> 关
+        u.PostMessageW(hw, WM_COMMAND, 40450, 0)
+        time.sleep(0.8)
+        off = not painted_at(e, 0, 5)
+        record("Ctrl+Alt+W 一次后关闭", off)
+
+        # 再按一次 -> 开
+        u.PostMessageW(hw, WM_COMMAND, 40450, 0)
+        time.sleep(0.8)
+        # 重新选词触发重涂
+        u.SendMessageW(e, SCI_SETSEL, 23, 28)
+        time.sleep(1.0)
+        record("Ctrl+Alt+W 两次后重新开启", painted_at(e, 0, 5))
+    finally:
+        try:
+            u.PostMessageW(hw, WM_CLOSE, 0, 0)
+            time.sleep(0.3)
+            pr.wait(4)
+        except Exception:
+            pr.kill()
+
+
 # 同一个内容、不同扩展名：不限格式
 # alpha 出现在偏移 0, 23, 42（注意不是 40：40 是 zeta 里的 a）
 DOC = b"alpha beta gamma\ndelta alpha epsilon\nzeta alpha eta\n"
@@ -195,6 +241,13 @@ print("== 同词高亮 E2E ==")
 run_case("a.txt", DOC, 23, 28, b"alpha", [0, 23, 42])
 run_case("b.log", DOC, 23, 28, b"alpha", [0, 23, 42])
 run_case("c.c", DOC, 23, 28, b"alpha", [0, 23, 42])
+
+# 半个词：选完整的 alpha(0..5)，只该涂 0 和 15；
+# 6 是 alphabet 里的 alpha（不是独立词），不该涂
+run_case("d.txt", b"alpha alphabet alpha\n", 0, 5, b"alpha", [0, 15])
+
+# 默认开启 + 菜单命令可关可开
+run_toggle()
 
 # 半个词：选完整的 alpha(0..5)，只该涂 0 和 15；
 # 6 是 alphabet 里的 alpha（不是独立词），不该涂

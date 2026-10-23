@@ -5778,7 +5778,8 @@ void LoadSettings()
   if (bShowWordWrapSymbols) bShowWordWrapSymbols = 1;
 
   bMatchBraces = IniSectionGetInt(pIniSection,L"MatchBraces",1);
-  bHiliteWord = IniSectionGetInt(pIniSection,L"HiliteWord",0);
+  bHiliteWord = IniSectionGetInt(pIniSection,L"HiliteWord",1);
+  if (bHiliteWord) bHiliteWord = 1;
   if (bMatchBraces) bMatchBraces = 1;
 
   bAutoCloseTags = IniSectionGetInt(pIniSection,L"AutoCloseTags",0);
