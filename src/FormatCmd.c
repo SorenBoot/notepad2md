@@ -208,8 +208,12 @@ void FormatDoCmd(HWND hwnd,int iCmd)
   /* --- 判断类型：看当前语法方案，认不出时再按内容猜 --- */
   iKind = FormatKindFromLexer();
   if (iKind == FMT_KIND_NONE) {
-    if (FormatLexerIsPlain())
+    if (FormatLexerIsPlain()) {
       iKind = Fmt_DetectKind(pIn,cbIn);
+      /* 纯文本（.log / .txt）：猜不出类型也至少能整理空白 */
+      if (iKind == FMT_KIND_NONE)
+        iKind = FMT_KIND_LOG;
+    }
   }
 
   if (iKind == FMT_KIND_NONE) {

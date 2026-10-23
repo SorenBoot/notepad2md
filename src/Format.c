@@ -398,6 +398,7 @@ static FMT_BOOL Fmt_Run(int iKind, const char *pIn, int cbIn,
     case FMT_KIND_HTML: bOk = FmtXml_Do (&C, iFlags | FMT_F_HTML, pErr); break;
     case FMT_KIND_SQL:  bOk = FmtSql_Do (&C, iFlags, pErr); break;
     case FMT_KIND_INI:  bOk = FmtIni_Do (&C, iFlags, pErr); break;
+    case FMT_KIND_LOG:  bOk = FmtLog_Do (&C, iFlags, pErr); break;
     default:
       if (pErr) pErr->iCode = FMT_E_UNEXPECTED_CHAR;
       bOk = 0;
@@ -441,7 +442,7 @@ static FMT_BOOL Fmt_Run(int iKind, const char *pIn, int cbIn,
     while (C.cbOut > 0 && Fmt_IsSpace((unsigned char)C.pOut[C.cbOut - 1]))
       C.cbOut--;
 
-    if (bEndedWithEol && C.cbOut > 0)
+    if (bEndedWithEol)
       Fmt_Put(&C, C.szEol, C.cchEol);   /* 末尾换行不算 token，不进映射表 */
   }
 

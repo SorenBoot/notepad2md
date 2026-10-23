@@ -31,6 +31,7 @@ echo "======== 2/6 格式化引擎单元测试（不依赖 GUI） ========"
 gcc -O1 -Wall -Wextra -Wno-unused-parameter -std=c99 \
     -o /tmp/format_test tests/run/test_format.c \
     src/Format.c src/Format_Json.c src/Format_Xml.c src/Format_Sql.c src/Format_Ini.c \
+    src/Format_Log.c \
     -Isrc || FAIL=1
 /tmp/format_test || FAIL=1
 

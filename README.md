@@ -48,7 +48,7 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 **格式整理（JSON / XML / SQL / INI / TOML）**
 
 - 顶层「格式」菜单三项：**格式化**（`Ctrl+Alt+F`）、**压缩**（`Ctrl+Alt+Shift+F`）、**校验**（`Ctrl+Alt+V`）
-- 支持类型：**JSON / JSONC / JSON5 / JSON Lines**、**XML / HTML**、**SQL**、**INI / TOML / .env**
+- 支持类型：**JSON / JSONC / JSON5 / JSON Lines**、**XML / HTML**、**SQL**、**INI / TOML / .env**、**纯文本 / .log**
   —— 按当前文件的语法方案自动选择；拿不准时按内容嗅探
 - **只动空白，不动字节** —— 不解析成对象树再重新序列化，所以键顺序、数字字面形式
   （`1.0` / `1e3` / `0x1F`）、大整数精度、重复键、Unicode 转义、注释、XML 属性顺序
@@ -63,6 +63,8 @@ Notepad2 是 Florian Balmer 于 2004–2011 年开发的轻量级记事本替代
 - **保守的地方是故意的** —— XML 混合内容（`<p>前 <b>粗</b> 后</p>`）、`<pre>` / `<script>` /
   `xml:space="preserve"`、TOML 多行数组与多行字符串一律原样保留；标签不配对直接报错，
   绝不猜隐式闭合；YAML 缩进即语义，不提供格式化
+- **.log / 纯文本只整理空白** —— 去掉每行行尾空白、连续空行压成一个、文件开头不留空行；
+  行首缩进原样保留（堆栈靠缩进分层），也绝不按时间戳/级别重排字段
 
 **编码处理**
 

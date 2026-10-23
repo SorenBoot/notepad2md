@@ -121,6 +121,7 @@ MD_SRC := \
 	../src/Format_Xml.c \
 	../src/Format_Sql.c \
 	../src/Format_Ini.c \
+	../src/Format_Log.c \
 	../src/FormatCmd.c \
 	../md4c/md4c.c
 

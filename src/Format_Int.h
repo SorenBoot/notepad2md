@@ -97,6 +97,7 @@ FMT_BOOL FmtJson_Do(FMTC *pC, int iFlags, FMTERR *pErr);
 FMT_BOOL FmtXml_Do (FMTC *pC, int iFlags, FMTERR *pErr);
 FMT_BOOL FmtSql_Do (FMTC *pC, int iFlags, FMTERR *pErr);
 FMT_BOOL FmtIni_Do (FMTC *pC, int iFlags, FMTERR *pErr);
+FMT_BOOL FmtLog_Do (FMTC *pC, int iFlags, FMTERR *pErr);
 
 /* 各格式器的内容嗅探，返回 0/1 */
 int FmtJson_Detect(const char *pIn, int cbIn);

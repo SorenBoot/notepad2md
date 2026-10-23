@@ -90,7 +90,8 @@ enum {
   FMT_KIND_XML,
   FMT_KIND_HTML,   /* XML 的宽松变体：<br> / <img> 这类 void 元素可以不写 "/>" */
   FMT_KIND_SQL,
-  FMT_KIND_INI
+  FMT_KIND_INI,
+  FMT_KIND_LOG      /* 纯文本 / .log：只整理空白，不猜字段 */
 };
 
 /*---------------------------------------------------------------------------

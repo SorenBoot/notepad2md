@@ -458,6 +458,59 @@ static void TestIni(void)
   run_bad(FMT_KIND_INI, "ini-空文档", "", FMT_E_EMPTY);
 }
 
+/* ------------------------------------------------------------------ 日志 */
+
+static void TestLog(void)
+{
+  static const CASE cases[] = {
+
+    /* 行尾空白去掉，行首缩进保留（堆栈靠缩进分层）*/
+    { FMT_KIND_LOG, "log-去行尾空白、保留缩进",
+      "2024-01-01 10:00:00 INFO  start   \n"
+      "    at com.foo.Bar(Bar.java:42)  \n"
+      "2024-01-01 10:00:01 ERROR boom\t\n",
+      0,
+      "2024-01-01 10:00:00 INFO  start\n"
+      "    at com.foo.Bar(Bar.java:42)\n"
+      "2024-01-01 10:00:01 ERROR boom\n", NULL },
+
+    /* 连续空行压成一个，开头不留空行 */
+    { FMT_KIND_LOG, "log-空行压缩",
+      "\n\n\na\n\n\n\nb\n\n\n",
+      0, "a\n\nb\n", NULL },
+
+    /* 压缩只丢空行，不粘行 */
+    { FMT_KIND_LOG, "log-压缩丢空行",
+      "a\n\n\nb   \n",
+      0, "a\n\nb\n", "a\nb\n" },
+
+    /* 结尾补一个换行（输入本来就有）*/
+    { FMT_KIND_LOG, "log-结尾换行",
+      "a\nb\n",
+      0, "a\nb\n", NULL },
+
+    /* 输入最后一行没换行：不擅自补（保留“这行还没写完”的信息）*/
+    { FMT_KIND_LOG, "log-末尾无换行",
+      "a\nb",
+      0, "a\nb", NULL },
+
+    /* 日志里混着 JSON 片段：只动空白，片段原样 */
+    { FMT_KIND_LOG, "log-混排内容原样",
+      "req {\"id\":1,\"ok\":true}  \nresp done\n",
+      0,
+      "req {\"id\":1,\"ok\":true}\nresp done\n", NULL },
+
+    /* 全空白文档 */
+    { FMT_KIND_LOG, "log-只有空白",
+      "   \n\t\n  \n",
+      0, "\n", NULL },
+  };
+
+  int i;
+  for (i = 0; i < (int)(sizeof(cases)/sizeof(cases[0])); i++)
+    run_case(&cases[i]);
+}
+
 /* ------------------------------------------------------------------ 识别 */
 
 static void TestDetect(void)
@@ -686,6 +739,7 @@ int main(void)
   printf(" [XML]\n");   TestXml();
   printf(" [SQL]\n");   TestSql();
   printf(" [INI]\n");   TestIni();
+  printf(" [日志]\n");  TestLog();
   printf(" [识别]\n");  TestDetect();
   printf(" [工具]\n");  TestLineCol();
   printf(" [光标]\n");  TestCaret();

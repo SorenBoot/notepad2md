@@ -1922,7 +1922,7 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_FMT_UNSUPPORTED     "The current syntax scheme has no formatter.\n\nFormatting supports JSON, XML/HTML, SQL, and INI/TOML."
+    IDS_FMT_UNSUPPORTED     "The current syntax scheme has no formatter.\n\nFormatting supports JSON, XML/HTML, SQL, INI/TOML, and (for plain text) whitespace cleanup."
     IDS_FMT_FAILED          "%s\n\nLine %d, column %d.\nThe document was not modified."
     IDS_FMT_ERR_NOMEM       "Out of memory."
     IDS_FMT_ERR_EMPTY       "The document is empty."
@@ -3851,7 +3851,7 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_FMT_UNSUPPORTED     "当前语法方案没有对应的格式化器。\n\n目前支持 JSON、XML/HTML、SQL 与 INI/TOML。"
+    IDS_FMT_UNSUPPORTED     "当前语法方案没有对应的格式化器。\n\n目前支持 JSON、XML/HTML、SQL、INI/TOML；纯文本与 .log 至少能整理空白。"
     IDS_FMT_FAILED          "%s\n\n第 %d 行第 %d 列。\n文档未被修改。"
     IDS_FMT_ERR_NOMEM       "内存不足。"
     IDS_FMT_ERR_EMPTY       "文档是空的。"
