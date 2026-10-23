@@ -95,24 +95,27 @@ SCI_SRC := \
 # Scintilla lexers（仅 vcxproj 中列出的 12 个）
 SCI_LEXERS := \
 	../scintilla/lexers/LexAsm.cxx \
+	../scintilla/lexers/LexBash.cxx \
 	../scintilla/lexers/LexCPP.cxx \
 	../scintilla/lexers/LexCSS.cxx \
 	../scintilla/lexers/LexConf.cxx \
 	../scintilla/lexers/LexHTML.cxx \
+	../scintilla/lexers/LexMarkdown.cxx \
 	../scintilla/lexers/LexOthers.cxx \
 	../scintilla/lexers/LexPascal.cxx \
 	../scintilla/lexers/LexPerl.cxx \
 	../scintilla/lexers/LexPowerShell.cxx \
 	../scintilla/lexers/LexPython.cxx \
 	../scintilla/lexers/LexSQL.cxx \
-	../scintilla/lexers/LexVB.cxx
+	../scintilla/lexers/LexVB.cxx \
+	../scintilla/lexers/LexYaml.cxx
 
 # Markdown 功能模块（新增）
 MD_SRC := \
 	../src/Markdown.c \
 	../src/Preview.c \
 	../src/Outline.c \
-	../src/Output.c \
+	../src/RunCmd.c \
 	../md4c/md4c.c
 
 C_OBJ   := $(N2_C_SRC:.c=.o) $(MD_SRC:.c=.o)

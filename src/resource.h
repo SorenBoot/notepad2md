@@ -184,6 +184,7 @@
 #define IDM_FILE_READONLY               40007
 #define IDM_FILE_LAUNCH                 40008
 #define IDM_FILE_OPENWITH               40009
+#define IDM_FILE_RUNCURRENT             40454
 #define IDM_FILE_RUN                    40010
 #define IDM_FILE_NEWWINDOW              40011
 #define IDM_FILE_NEWWINDOW2             40012
@@ -331,10 +332,6 @@
 #define IDM_VIEW_UNREGCTX                40447
 #define IDM_VIEW_OUTLINE                 40448
 #define IDM_OUTLINE_GOTO                 40449
-#define IDM_VIEW_OUTPUT                  40450
-#define IDM_OUTPUT_GOTOLINE              40451
-#define IDM_OUTPUT_FLOAT                 40452
-#define IDM_OUTPUT_DOCK                  40453
 #define IDM_HELP_ABOUT                  40500
 #define IDM_TRAY_RESTORE                40600
 #define IDM_TRAY_EXIT                   40601
@@ -362,6 +359,7 @@
 #define IDT_FILE_OPENFAV                40721
 #define IDT_FILE_ADDTOFAV               40722
 #define IDT_VIEW_MDPREVIEW              40723
+#define IDT_FILE_RUNCURRENT             40724
 #define SC_SAVEPOS                      40800
 #define SC_RESETPOS                     40801
 #define IDS_ERR_LOADFILE                50000
@@ -416,7 +414,11 @@
 #define IDS_CTXREG_FAIL                 50049
 #define IDS_CTXUNREG_OK                 50050
 #define IDS_CTXUNREG_FAIL               50051
-#define IDS_ASK_SAVE_BEFORE_RUN        50052
+#define IDS_RUNCMD_RUNNING             50053
+#define IDS_RUNCMD_DONE                50054
+#define IDS_RUNCMD_STOPPED             50055
+#define IDS_RUNCMD_FAILED              50056
+#define IDS_RUNCMD_NOMAP               50057
 #define IDS_CMDLINEHELP                 60000
 
 // Next default values for new objects

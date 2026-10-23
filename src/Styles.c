@@ -213,7 +213,7 @@ KEYWORDLIST KeyWords_XML = {
 "", "", "", "", "", "", "", "", "" };
 
 
-EDITLEXER lexXML = { SCLEX_XML, 63002, L"XML Document", L"xml; xsl; rss; svg; xul; xsd; xslt; axl; rdf; xaml; vcproj", L"", &KeyWords_XML, {
+EDITLEXER lexXML = { SCLEX_XML, 63002, L"XML Document", L"xml; xsl; rss; svg; xul; xsd; xslt; axl; rdf; xaml; vcproj; csproj; vbproj; fsproj; vcxproj; props; targets; nuspec; resx; plist; manifest; wxs; proj; csx", L"", &KeyWords_XML, {
                      { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
                      { MULTI_STYLE(SCE_H_TAG,SCE_H_TAGUNKNOWN,SCE_H_TAGEND,0), 63187, L"XML Tag", L"fore:#881280", L"" },
                      { MULTI_STYLE(SCE_H_ATTRIBUTE,SCE_H_ATTRIBUTEUNKNOWN,0,0), 63188, L"XML Attribute", L"fore:#994500", L"" },
@@ -481,7 +481,7 @@ KEYWORDLIST KeyWords_JS = {
 "", "", "", "", "", "", "", "" };
 
 
-EDITLEXER lexJS = { SCLEX_CPP, 63010, L"JavaScript", L"js; jse; jsm; json; as", L"", &KeyWords_JS, {
+EDITLEXER lexJS = { SCLEX_CPP, 63010, L"JavaScript", L"js; jse; jsm; mjs; cjs; jsx; ts; tsx; as; vue; svelte; astro", L"", &KeyWords_JS, {
                     { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
                     //{ SCE_C_DEFAULT, L"Default", L"", L"" },
                     { SCE_C_COMMENT, 63127, L"Comment", L"fore:#646464", L"" },
@@ -723,7 +723,7 @@ KEYWORDLIST KeyWords_INI = {
 "", "", "", "", "", "", "", "", "" };
 
 
-EDITLEXER lexINI = { SCLEX_PROPERTIES, 63015, L"Configuration Files", L"ini; inf; reg; cfg; properties; oem; sif; url; sed; theme", L"", &KeyWords_INI, {
+EDITLEXER lexINI = { SCLEX_PROPERTIES, 63015, L"Configuration Files", L"ini; inf; reg; cfg; properties; oem; sif; url; sed; theme; toml; env; gitignore; dockerignore; editorconfig; gitconfig; gitattributes; npmrc; yarnrc; babelrc; eslintrc; prettierrc; lock; cnf; list; service", L"", &KeyWords_INI, {
                      { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
                      //{ SCE_PROPS_DEFAULT, L"Default", L"", L"" },
                      { SCE_PROPS_COMMENT, 63127, L"Comment", L"fore:#008000", L"" },
@@ -758,7 +758,7 @@ KEYWORDLIST KeyWords_DIFF = {
 "", "", "", "", "", "", "", "", "" };
 
 
-EDITLEXER lexDIFF = { SCLEX_DIFF, 63017, L"Diff Files", L"diff; patch", L"", &KeyWords_DIFF, {
+EDITLEXER lexDIFF = { SCLEX_DIFF, 63017, L"Diff Files", L"diff; patch; rej", L"", &KeyWords_DIFF, {
                       { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
                       //{ SCE_DIFF_DEFAULT, L"Default", L"", L"" },
                       { SCE_DIFF_COMMENT, 63127, L"Comment", L"fore:#008000", L"" },
@@ -817,7 +817,7 @@ KEYWORDLIST KeyWords_PY = {
 "", "", "", "", "", "", "", "" };
 
 
-EDITLEXER lexPY = { SCLEX_PYTHON, 63019, L"Python Script", L"py; pyw", L"", &KeyWords_PY, {
+EDITLEXER lexPY = { SCLEX_PYTHON, 63019, L"Python Script", L"py; pyw; pyi; pyx; sconstruct; sc", L"", &KeyWords_PY, {
                     { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
                     //{ SCE_P_DEFAULT, L"Default", L"", L"" },
                     { MULTI_STYLE(SCE_P_COMMENTLINE,SCE_P_COMMENTBLOCK,0,0), 63127, L"Comment", L"fore:#880000", L"" },
@@ -969,6 +969,131 @@ EDITLEXER lexPS = { SCLEX_POWERSHELL, 63021, L"PowerShell Script", L"ps1; psd1; 
                     { -1, 00000, L"", L"", L"" } } };
 
 
+KEYWORDLIST KeyWords_JSON = {
+"true false null", "", "", "", "", "", "", "", "" };
+
+
+EDITLEXER lexJSON = { SCLEX_CPP, 63022, L"JSON", L"json; jsonc; json5; jsonl; webmanifest; ipynb; avsc", L"", &KeyWords_JSON, {
+                      { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
+                      { SCE_C_COMMENT, 63127, L"Comment", L"fore:#646464", L"" },
+                      { SCE_C_WORD, 63128, L"Keyword", L"bold; fore:#A46000", L"" },
+                      { SCE_C_IDENTIFIER, 63129, L"Identifier", L"", L"" },
+                      { MULTI_STYLE(SCE_C_STRING,SCE_C_CHARACTER,SCE_C_STRINGEOL,SCE_C_VERBATIM), 63131, L"String", L"fore:#008000", L"" },
+                      { SCE_C_NUMBER, 63130, L"Number", L"fore:#FF0000", L"" },
+                      { SCE_C_OPERATOR, 63132, L"Operator", L"fore:#B000B0", L"" },
+                      { -1, 00000, L"", L"", L"" } } };
+
+
+KEYWORDLIST KeyWords_MD = {
+"", "", "", "", "", "", "", "", "" };
+
+
+EDITLEXER lexMD = { SCLEX_MARKDOWN, 63023, L"Markdown", L"md; markdown", L"", &KeyWords_MD, {
+                    { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
+                    { SCE_MARKDOWN_STRONG1, 63252, L"Strong", L"bold", L"" },
+                    { SCE_MARKDOWN_STRONG2, 63252, L"Strong 2", L"bold", L"" },
+                    { SCE_MARKDOWN_EM1, 63253, L"Emphasis", L"italic", L"" },
+                    { SCE_MARKDOWN_EM2, 63253, L"Emphasis 2", L"italic", L"" },
+                    { SCE_MARKDOWN_HEADER1, 63254, L"Header 1", L"bold; fore:#1F3C88; back:#F2F6FF", L"" },
+                    { SCE_MARKDOWN_HEADER2, 63255, L"Header 2", L"bold; fore:#1F3C88", L"" },
+                    { SCE_MARKDOWN_HEADER3, 63256, L"Header 3", L"bold; fore:#274B9F", L"" },
+                    { SCE_MARKDOWN_HEADER4, 63257, L"Header 4", L"bold; fore:#31599F", L"" },
+                    { SCE_MARKDOWN_HEADER5, 63258, L"Header 5", L"bold; fore:#3C67A8", L"" },
+                    { SCE_MARKDOWN_HEADER6, 63259, L"Header 6", L"bold; fore:#4A75B0", L"" },
+                    { MULTI_STYLE(SCE_MARKDOWN_PRECHAR,SCE_MARKDOWN_CODE,SCE_MARKDOWN_CODE2,0), 63260, L"Code Block", L"fore:#333333; back:#EEEEEE", L"" },
+                    { SCE_MARKDOWN_CODEBK, 63261, L"Code Inline", L"fore:#A31515; back:#F7F7F7", L"" },
+                    { SCE_MARKDOWN_ULIST_ITEM, 63262, L"List Item", L"bold; fore:#8250DF", L"" },
+                    { SCE_MARKDOWN_OLIST_ITEM, 63262, L"Ordered List", L"bold; fore:#8250DF", L"" },
+                    { SCE_MARKDOWN_BLOCKQUOTE, 63263, L"Blockquote", L"fore:#008080", L"" },
+                    { SCE_MARKDOWN_HRULE, 63264, L"Horizontal Rule", L"fore:#808080", L"" },
+                    { SCE_MARKDOWN_LINK, 63265, L"Link", L"fore:#0A58CA; underline", L"" },
+                    { -1, 00000, L"", L"", L"" } } };
+
+
+KEYWORDLIST KeyWords_YAML = {
+"true True TRUE false False FALSE yes Yes YES no No NO on On ON off Off OFF null Null NULL "
+"~ y Y n N", "", "", "", "", "", "", "", "" };
+
+
+EDITLEXER lexYAML = { SCLEX_YAML, 63024, L"YAML", L"yaml; yml; yamllint", L"", &KeyWords_YAML, {
+                      { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
+                      { SCE_YAML_COMMENT, 63127, L"Comment", L"fore:#646464", L"" },
+                      { SCE_YAML_IDENTIFIER, 63128, L"Key", L"bold; fore:#0A246A", L"" },
+                      { SCE_YAML_KEYWORD, 63129, L"Keyword", L"bold; fore:#A46000", L"" },
+                      { SCE_YAML_NUMBER, 63130, L"Number", L"fore:#FF0000", L"" },
+                      { SCE_YAML_REFERENCE, 63131, L"Anchor/Alias", L"fore:#008080", L"" },
+                      { SCE_YAML_DOCUMENT, 63132, L"Document", L"bold; fore:#808080", L"" },
+                      { SCE_YAML_TEXT, 63133, L"Block Scalar", L"fore:#4B4B4B; back:#F5F5F5", L"" },
+                      { SCE_YAML_OPERATOR, 63134, L"Operator", L"fore:#B000B0", L"" },
+                      { SCE_YAML_ERROR, 63135, L"Error", L"fore:#FF0000; back:#FFFFC0", L"" },
+                      { -1, 00000, L"", L"", L"" } } };
+
+
+KEYWORDLIST KeyWords_SH = {
+"if then else elif fi for while until do done in case esac function return select time "
+"break continue exit local export readonly declare typeset unset shift eval exec trap "
+"set unalias alias source wait kill read printf echo test trap",
+"", "", "", "", "", "", "", "" };
+
+
+EDITLEXER lexSH = { SCLEX_BASH, 63025, L"Shell Script", L"sh; bash; zsh; ksh; csh; tcsh; ash; dash; fish; bashrc; zshrc; bash_profile; zshrc; profile; xprofile; envrc", L"", &KeyWords_SH, {
+                    { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
+                    { SCE_SH_COMMENTLINE, 63127, L"Comment", L"fore:#646464", L"" },
+                    { SCE_SH_WORD, 63128, L"Keyword", L"bold; fore:#A46000", L"" },
+                    { SCE_SH_IDENTIFIER, 63129, L"Identifier", L"", L"" },
+                    { MULTI_STYLE(SCE_SH_STRING,SCE_SH_CHARACTER,0,0), 63131, L"String", L"fore:#008000", L"" },
+                    { SCE_SH_NUMBER, 63130, L"Number", L"fore:#FF0000", L"" },
+                    { SCE_SH_OPERATOR, 63132, L"Operator", L"fore:#B000B0", L"" },
+                    { SCE_SH_SCALAR, 63266, L"Variable", L"fore:#0A246A", L"" },
+                    { MULTI_STYLE(SCE_SH_PARAM,SCE_SH_HERE_DELIM,0,0), 63267, L"Parameter", L"fore:#804000", L"" },
+                    { SCE_SH_BACKTICKS, 63268, L"Backticks", L"fore:#008080", L"" },
+                    { SCE_SH_HERE_Q, 63133, L"Here Document", L"fore:#4B4B4B; back:#F5F5F5", L"" },
+                    { SCE_SH_ERROR, 63135, L"Error", L"fore:#FF0000; back:#FFFFC0", L"" },
+                    { -1, 00000, L"", L"", L"" } } };
+
+
+KEYWORDLIST KeyWords_GO = {
+"break case chan const continue default defer else fallthrough for func go goto if "
+"import interface map package range return select struct switch type var "
+"bool byte complex64 complex128 error float32 float64 int int8 int16 int32 int64 "
+"rune string uint uint8 uint16 uint32 uint64 uintptr "
+"true false nil iota append cap close complex copy delete imag len make new panic "
+"print println real recover",
+"", "", "", "", "", "", "", "" };
+
+
+EDITLEXER lexGO = { SCLEX_CPP, 63026, L"Go", L"go", L"", &KeyWords_GO, {
+                    { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
+                    { MULTI_STYLE(SCE_C_COMMENT,SCE_C_COMMENTLINE,SCE_C_COMMENTDOC,SCE_C_COMMENTLINEDOC), 63127, L"Comment", L"fore:#646464", L"" },
+                    { SCE_C_WORD, 63128, L"Keyword", L"bold; fore:#A46000", L"" },
+                    { SCE_C_IDENTIFIER, 63129, L"Identifier", L"", L"" },
+                    { MULTI_STYLE(SCE_C_STRING,SCE_C_CHARACTER,SCE_C_STRINGEOL,SCE_C_VERBATIM), 63131, L"String", L"fore:#008000", L"" },
+                    { SCE_C_NUMBER, 63130, L"Number", L"fore:#FF0000", L"" },
+                    { SCE_C_OPERATOR, 63132, L"Operator", L"fore:#B000B0", L"" },
+                    { -1, 00000, L"", L"", L"" } } };
+
+
+KEYWORDLIST KeyWords_RUST = {
+"as async await break const continue crate dyn else enum extern false fn for if impl in "
+"let loop match mod move mut pub ref return self Self static struct super trait true type "
+"unsafe use where while "
+"i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize f32 f64 bool char str String "
+"Vec Option Result Box Rc Arc Some None Ok Err "
+"println print format vec panic assert assert_eq unimplemented todo",
+"", "", "", "", "", "", "", "" };
+
+
+EDITLEXER lexRUST = { SCLEX_CPP, 63027, L"Rust", L"rs", L"", &KeyWords_RUST, {
+                      { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
+                      { MULTI_STYLE(SCE_C_COMMENT,SCE_C_COMMENTLINE,SCE_C_COMMENTDOC,SCE_C_COMMENTLINEDOC), 63127, L"Comment", L"fore:#646464", L"" },
+                      { SCE_C_WORD, 63128, L"Keyword", L"bold; fore:#A46000", L"" },
+                      { SCE_C_IDENTIFIER, 63129, L"Identifier", L"", L"" },
+                      { MULTI_STYLE(SCE_C_STRING,SCE_C_CHARACTER,SCE_C_STRINGEOL,SCE_C_VERBATIM), 63131, L"String", L"fore:#008000", L"" },
+                      { SCE_C_NUMBER, 63130, L"Number", L"fore:#FF0000", L"" },
+                      { SCE_C_OPERATOR, 63132, L"Operator", L"fore:#B000B0", L"" },
+                      { -1, 00000, L"", L"", L"" } } };
+
+
 // This array holds all the lexers...
 PEDITLEXER pLexArray[NUMLEXERS] =
 {
@@ -993,7 +1118,13 @@ PEDITLEXER pLexArray[NUMLEXERS] =
   &lexCONF,
   &lexPS,
   &lexBAT,
-  &lexDIFF
+  &lexDIFF,
+  &lexJSON,
+  &lexMD,
+  &lexYAML,
+  &lexSH,
+  &lexGO,
+  &lexRUST
 };
 
 
@@ -1689,6 +1820,14 @@ PEDITLEXER __fastcall Style_SniffShebang(char *pchText)
       return(&lexPL);
     else if ((pch - pchText) >= 6 && StrCmpNIA(pch-6,"python",6) == 0)
       return(&lexPY);
+    // 新增：shell 与 node 脚本（无扩展名时靠 shebang 识别）
+    else if ((pch - pchText) >= 2 &&
+             (StrCmpNIA(pch-2,"sh",2) == 0 || StrCmpNIA(pch-4,"bash",4) == 0 ||
+              StrCmpNIA(pch-4,"zsh",4) == 0 || StrCmpNIA(pch-3,"ksh",3) == 0 ||
+              StrCmpNIA(pch-5,"dash",5) == 0 || StrCmpNIA(pch-4,"fish",4) == 0))
+      return(&lexSH);
+    else if ((pch - pchText) >= 4 && StrCmpNIA(pch-4,"node",4) == 0)
+      return(&lexJS);
   }
 
   return(NULL);
@@ -1814,6 +1953,69 @@ void Style_SetLexerFromFile(HWND hwnd,LPCWSTR lpszFile)
        lstrcmpi(PathFindFileName(lpszFile),L"makefile") == 0) {
     pLexNew = &lexMAK;
     bFound = TRUE;
+  }
+
+  // 无扩展名的常见文件，按文件名识别
+  if (!bFound && bAutoSelect) {
+    LPCWSTR lpszName = PathFindFileName(lpszFile);
+    if (lpszName) {
+      static const LPCWSTR aShellNames[] = {
+        L"bashrc", L"zshrc", L"profile", L"bash_profile", L"bash_logout",
+        L"zprofile", L"zshenv", L"kshrc", L"inputrc", L".bashrc", L".zshrc",
+        L".profile", L".bash_profile", L".bash_logout", L".zprofile",
+        L".zshenv", L".xprofile", L"PKGBUILD", L"configure", L"gradlew",
+        L"mvnw", NULL
+      };
+      static const LPCWSTR aCfgNames[] = {
+        L".gitignore", L".gitattributes", L".gitmodules", L".gitconfig",
+        L".dockerignore", L".editorconfig", L".npmrc", L".yarnrc", L".nvmrc",
+        L".babelrc", L".eslintrc", L".prettierrc", L".stylelintrc",
+        L".htaccess", L"hosts", L"gitignore", L"editorconfig", NULL
+      };
+      static const LPCWSTR aMiscNames[] = {
+        L"dockerfile", L"containerfile", NULL
+      };
+      static const LPCWSTR aKeyValueNames[] = {
+        L"procfile", L"gemfile", L"rakefile", NULL
+      };
+      int k;
+      for (k = 0; aShellNames[k]; k++) {
+        if (lstrcmpi(lpszName,aShellNames[k]) == 0) {
+          pLexNew = &lexSH;
+          bFound = TRUE;
+          break;
+        }
+      }
+      if (!bFound) {
+        for (k = 0; aCfgNames[k]; k++) {
+          if (lstrcmpi(lpszName,aCfgNames[k]) == 0) {
+            pLexNew = &lexCONF;
+            bFound = TRUE;
+            break;
+          }
+        }
+      }
+      if (!bFound) {
+        for (k = 0; aMiscNames[k]; k++) {
+          if (lstrcmpi(lpszName,aMiscNames[k]) == 0) {
+            // Dockerfile：RUN/CMD 行本身就是 shell，用 Shell 方案着色（# 注释也一致）
+            pLexNew = &lexSH;
+            bFound = TRUE;
+            break;
+          }
+        }
+      }
+      if (!bFound) {
+        for (k = 0; aKeyValueNames[k]; k++) {
+          if (lstrcmpi(lpszName,aKeyValueNames[k]) == 0) {
+            // Procfile / Gemfile 之类「键: 值」结构的文件
+            pLexNew = &lexCONF;
+            bFound = TRUE;
+            break;
+          }
+        }
+      }
+    }
   }
 
   if (!bFound && bAutoSelect && (!fNoHTMLGuess || !fNoCGIGuess)) {

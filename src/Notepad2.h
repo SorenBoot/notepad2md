@@ -85,6 +85,9 @@ typedef struct np2params {
 //==== Change Notifications ===================================================
 #define ID_WATCHTIMER 0xA000
 #define ID_PREVIEWTIMER 0xA002
+#define ID_RUNCMDTIMER  0xA003
+#define ID_RUNCMDDOMTIMER 0xA004
+#define ID_RUNCMDINTIMER  0xA005   /* 仅测试：延迟注入 stdin 输入 */
 #define WM_CHANGENOTIFY WM_USER+1
 //#define WM_CHANGENOTIFYCLEAR WM_USER+2
 

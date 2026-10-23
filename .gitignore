@@ -14,6 +14,8 @@
 *.exp
 *.res
 *.manifest.tmp
+__pycache__/
+*.pyc
 
 # ---- 构建目录 ----
 build/obj/
@@ -95,4 +97,5 @@ tests/README.md
 /bar_debug.log
 /preview_test.log
 docs/
-tests/
+/tests/*
+!/tests/run/

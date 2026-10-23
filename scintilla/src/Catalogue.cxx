@@ -91,7 +91,7 @@ int Scintilla_LinkLexers() {
 	//LINK_LEXER(lmAU3);
 	//LINK_LEXER(lmAVE);
 	//LINK_LEXER(lmBaan);
-	//LINK_LEXER(lmBash);
+	LINK_LEXER(lmBash);
 	LINK_LEXER(lmBatch);
 	//LINK_LEXER(lmBlitzBasic);
 	//LINK_LEXER(lmBullant);
@@ -130,7 +130,8 @@ int Scintilla_LinkLexers() {
 	//LINK_LEXER(lmLua);
 	//LINK_LEXER(lmMagikSF);
 	LINK_LEXER(lmMake);
-	//LINK_LEXER(lmMarkdown);
+	LINK_LEXER(lmYaml);
+	LINK_LEXER(lmMarkdown);
 	//LINK_LEXER(lmMatlab);
 	//LINK_LEXER(lmMETAPOST);
 	//LINK_LEXER(lmMMIXAL);

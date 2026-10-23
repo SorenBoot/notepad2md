@@ -90,6 +90,8 @@ BEGIN
             MENUITEM SEPARATOR
             MENUITEM "Execute &Document\tCtrl+L",   IDM_FILE_LAUNCH
             MENUITEM "&Open with...\tAlt+L",        IDM_FILE_OPENWITH
+            MENUITEM "Run Current &File\tCtrl+Shift+Enter",
+                                                    IDM_FILE_RUNCURRENT
             MENUITEM "&Command...\tCtrl+R",         IDM_FILE_RUN
         END
         MENUITEM SEPARATOR
@@ -260,9 +262,6 @@ BEGIN
     BEGIN
         MENUITEM "Markdown Pre&view\tCtrl+Alt+M", IDM_VIEW_MDPREVIEW
         MENUITEM "&Outline\tCtrl+Alt+O",     IDM_VIEW_OUTLINE
-        MENUITEM "&Output Panel\tCtrl+Alt+U", IDM_VIEW_OUTPUT
-        MENUITEM "Output as &Floating Window",  IDM_OUTPUT_FLOAT
-        MENUITEM "Dock Output to &Bottom",      IDM_OUTPUT_DOCK
         MENUITEM SEPARATOR
         MENUITEM "&Syntax Scheme...\tF12",      IDM_VIEW_SCHEME
         MENUITEM "&2nd Default Scheme\tShift+F12", IDM_VIEW_USE2NDDEFAULT
@@ -468,6 +467,8 @@ BEGIN
     "Q",            IDM_EDIT_ENCLOSESELECTION, VIRTKEY, ALT, NOINVERT
     "Q",            IDM_EDIT_STREAMCOMMENT, VIRTKEY, SHIFT, CONTROL,
                                                     NOINVERT
+    VK_RETURN,      IDM_FILE_RUNCURRENT,    VIRTKEY, SHIFT, CONTROL,
+                                                    NOINVERT
     "R",            IDM_FILE_RUN,           VIRTKEY, CONTROL, NOINVERT
     "R",            IDM_EDIT_REMOVEBLANKLINES, VIRTKEY, ALT, NOINVERT
     "R",            IDM_EDIT_UNESCAPECCHARS, VIRTKEY, CONTROL, ALT, NOINVERT
@@ -536,7 +537,6 @@ BEGIN
     VK_F7,          IDM_VIEW_SAVESETTINGSNOW, VIRTKEY, NOINVERT
     "M",            IDM_VIEW_MDPREVIEW,     VIRTKEY, CONTROL, ALT, NOINVERT
     "O",            IDM_VIEW_OUTLINE,       VIRTKEY, CONTROL, ALT, NOINVERT
-    "U",            IDM_VIEW_OUTPUT,        VIRTKEY, CONTROL, ALT, NOINVERT
     VK_F7,          CMD_OPENINIFILE,        VIRTKEY, CONTROL, NOINVERT
     VK_F8,          IDM_ENCODING_RECODE,    VIRTKEY, NOINVERT
     VK_F8,          IDM_EDIT_INSERT_ENCODING, VIRTKEY, CONTROL, NOINVERT
@@ -1465,6 +1465,8 @@ BEGIN
     IDT_FILE_OPEN           "Open"
     IDT_FILE_BROWSE         "Browse"
     IDT_FILE_SAVE           "Save"
+    IDT_FILE_RUNCURRENT     "Run Current File  (Ctrl+Shift+Enter)"
+    IDT_VIEW_MDPREVIEW      "Markdown Preview  (Ctrl+Alt+M)"
 END
 
 STRINGTABLE
@@ -1554,8 +1556,11 @@ BEGIN
     IDS_CTXREG_FAIL         "Could not register the Explorer context menu. Check your registry permissions."
     IDS_CTXUNREG_OK         "notepad2md has been removed from the Explorer context menu."
     IDS_CTXUNREG_FAIL       "Could not remove the Explorer context menu entry."
-    IDS_ASK_SAVE_BEFORE_RUN  "The current file has unsaved changes.\nThe command will run against the version already on disk.\n\nSave before running?"
-    IDS_SETTINGSNOTSAVED    "No existing configuration file was found.\nTo keep your style modifications, save settings now (F7) or go back to scheme configuration (Ctrl+F12) and export your styles."
+    IDS_RUNCMD_RUNNING  "Running..."
+    IDS_RUNCMD_DONE  "Completed"
+    IDS_RUNCMD_STOPPED  "Stopped"
+    IDS_RUNCMD_FAILED  "Failed"
+    IDS_RUNCMD_NOMAP  "Cannot infer how to run this file."
     IDS_EXPORT_FAIL         "Error exporting style settings to ""%s""."
     IDS_PREVIEW_ERROR       "Failed to create the Markdown preview control."
     IDS_PREVIEW_COPY        "Copy"
@@ -1985,6 +1990,8 @@ BEGIN
             MENUITEM SEPARATOR
             MENUITEM "执行文档(&D)\tCtrl+L",   IDM_FILE_LAUNCH
             MENUITEM "打开方式(&O)...\tAlt+L",        IDM_FILE_OPENWITH
+            MENUITEM "运行当前文件(&F)\tCtrl+Shift+Enter",
+                                                    IDM_FILE_RUNCURRENT
             MENUITEM "命令(&C)...\tCtrl+R",         IDM_FILE_RUN
         END
         MENUITEM SEPARATOR
@@ -2155,9 +2162,6 @@ BEGIN
     BEGIN
         MENUITEM "Markdown 预览(&V)\tCtrl+Alt+M", IDM_VIEW_MDPREVIEW
         MENUITEM "大纲(&O)\tCtrl+Alt+O",     IDM_VIEW_OUTLINE
-        MENUITEM "命令输出(&U)\tCtrl+Alt+U", IDM_VIEW_OUTPUT
-        MENUITEM "输出面板独立成窗口(&F)",       IDM_OUTPUT_FLOAT
-        MENUITEM "输出面板停靠到底部(&B)",       IDM_OUTPUT_DOCK
         MENUITEM SEPARATOR
         MENUITEM "语法方案(&S)...\tF12",      IDM_VIEW_SCHEME
         MENUITEM "第二默认方案(&2)\tShift+F12", IDM_VIEW_USE2NDDEFAULT
@@ -2363,6 +2367,8 @@ BEGIN
     "Q",            IDM_EDIT_ENCLOSESELECTION, VIRTKEY, ALT, NOINVERT
     "Q",            IDM_EDIT_STREAMCOMMENT, VIRTKEY, SHIFT, CONTROL,
                                                     NOINVERT
+    VK_RETURN,      IDM_FILE_RUNCURRENT,    VIRTKEY, SHIFT, CONTROL,
+                                                    NOINVERT
     "R",            IDM_FILE_RUN,           VIRTKEY, CONTROL, NOINVERT
     "R",            IDM_EDIT_REMOVEBLANKLINES, VIRTKEY, ALT, NOINVERT
     "R",            IDM_EDIT_UNESCAPECCHARS, VIRTKEY, CONTROL, ALT, NOINVERT
@@ -2431,7 +2437,6 @@ BEGIN
     VK_F7,          IDM_VIEW_SAVESETTINGSNOW, VIRTKEY, NOINVERT
     "M",            IDM_VIEW_MDPREVIEW,     VIRTKEY, CONTROL, ALT, NOINVERT
     "O",            IDM_VIEW_OUTLINE,       VIRTKEY, CONTROL, ALT, NOINVERT
-    "U",            IDM_VIEW_OUTPUT,        VIRTKEY, CONTROL, ALT, NOINVERT
     VK_F7,          CMD_OPENINIFILE,        VIRTKEY, CONTROL, NOINVERT
     VK_F8,          IDM_ENCODING_RECODE,    VIRTKEY, NOINVERT
     VK_F8,          IDM_EDIT_INSERT_ENCODING, VIRTKEY, CONTROL, NOINVERT
@@ -3360,6 +3365,8 @@ BEGIN
     IDT_FILE_OPEN           "Open"
     IDT_FILE_BROWSE         "Browse"
     IDT_FILE_SAVE           "Save"
+    IDT_FILE_RUNCURRENT     "运行当前文件  (Ctrl+Shift+Enter)"
+    IDT_VIEW_MDPREVIEW      "Markdown 预览  (Ctrl+Alt+M)"
 END
 
 STRINGTABLE
@@ -3449,12 +3456,16 @@ BEGIN
     IDS_CTXREG_FAIL         "注册右键菜单失败，请检查注册表权限。"
     IDS_CTXUNREG_OK         "已从右键菜单移除 notepad2md。"
     IDS_CTXUNREG_FAIL       "移除右键菜单项失败。"
-    IDS_ASK_SAVE_BEFORE_RUN  "当前文件有未保存的修改。\n命令将以磁盘上已保存的版本为准执行。\n\n是否先保存？"
     IDS_SETTINGSNOTSAVED    "未找到现有配置文件。\n要保留您的样式修改，请立即保存设置 (F7)，或返回方案配置 (Ctrl+F12) 并导出您的样式。"
     IDS_EXPORT_FAIL         "导出样式设置到 ""%s""。"
     IDS_PREVIEW_ERROR       "无法创建 Markdown 预览控件。"
     IDS_PREVIEW_COPY        "复制"
     IDS_PREVIEW_COPIED      "已复制"
+    IDS_RUNCMD_RUNNING  "运行中…"
+    IDS_RUNCMD_DONE  "完成"
+    IDS_RUNCMD_STOPPED  "已停止"
+    IDS_RUNCMD_FAILED  "失败"
+    IDS_RUNCMD_NOMAP  "无法推断运行方式。"
     IDS_ABOUT_MODIFIEDFROM  "基于 Notepad2 4.2.25 (Florian Balmer) 修改"
     IDS_ABOUT_MAINTAINER    "修改与维护"
 END

@@ -147,8 +147,11 @@ static void CopyToClipboard(HWND hwnd, const WCHAR *text)
   对象独立计数：IE 会多次索取 GetExternal 并各自 AddRef，不能与 HostSite 共用计数。
 */
 
-#define MD_DISPID_COPY 1
-#define MD_DISPID_OPEN 2
+#define MD_DISPID_COPY    1
+#define MD_DISPID_OPEN    2
+#define MD_DISPID_SAVELOG 3
+#define MD_DISPID_INPUT   4
+#define MD_DISPID_EOF     5
 
 typedef struct tagScriptBridge {
   IDispatch  disp;      /* 必须第一个成员 */
@@ -219,6 +222,18 @@ static HRESULT STDMETHODCALLTYPE Bridge_GetIDsOfNames(IDispatch *This, REFIID ri
     rgDispId[0] = MD_DISPID_OPEN;
     return S_OK;
   }
+  if (rgszNames[0] && lstrcmpiW(rgszNames[0], L"MDSaveLog") == 0) {
+    rgDispId[0] = MD_DISPID_SAVELOG;
+    return S_OK;
+  }
+  if (rgszNames[0] && lstrcmpiW(rgszNames[0], L"MDInput") == 0) {
+    rgDispId[0] = MD_DISPID_INPUT;
+    return S_OK;
+  }
+  if (rgszNames[0] && lstrcmpiW(rgszNames[0], L"MDInputEOF") == 0) {
+    rgDispId[0] = MD_DISPID_EOF;
+    return S_OK;
+  }
   rgDispId[0] = DISPID_UNKNOWN;
   return DISP_E_UNKNOWNNAME;
 }
@@ -230,11 +245,29 @@ static HRESULT STDMETHODCALLTYPE Bridge_Invoke(IDispatch *This, DISPID dispIdMem
 {
   (void)This; (void)riid; (void)lcid; (void)pVarResult; (void)pExcepInfo;
 
-  if (dispIdMember != MD_DISPID_COPY && dispIdMember != MD_DISPID_OPEN)
+  if (dispIdMember != MD_DISPID_COPY &&
+      dispIdMember != MD_DISPID_OPEN &&
+      dispIdMember != MD_DISPID_SAVELOG &&
+      dispIdMember != MD_DISPID_INPUT &&
+      dispIdMember != MD_DISPID_EOF)
     return DISP_E_MEMBERNOTFOUND;
 
   if (!(wFlags & DISPATCH_METHOD))
     return DISP_E_MEMBERNOTFOUND;
+
+  /* MDInputEOF 不带参数：关掉 stdin 写端，子进程读到 EOF */
+  if (dispIdMember == MD_DISPID_EOF) {
+    extern void RunCmd_CloseStdin(void);
+    RunCmd_CloseStdin();
+    return S_OK;
+  }
+
+  /* MDSaveLog 不带参数：把「运行当前文件」的输出另存为 .txt */
+  if (dispIdMember == MD_DISPID_SAVELOG) {
+    extern BOOL RunCmd_SaveLog(HWND);
+    RunCmd_SaveLog(g_hwndHostForClip);
+    return S_OK;
+  }
 
   if (!pDispParams || pDispParams->cArgs < 1 || !pDispParams->rgvarg)
     return E_INVALIDARG;
@@ -249,6 +282,10 @@ static HRESULT STDMETHODCALLTYPE Bridge_Invoke(IDispatch *This, DISPID dispIdMem
     if (SUCCEEDED(hr) && vt.vt == VT_BSTR) {
       if (dispIdMember == MD_DISPID_COPY)
         CopyToClipboard(g_hwndHostForClip, vt.bstrVal);
+      else if (dispIdMember == MD_DISPID_INPUT) {
+        extern BOOL RunCmd_SendInput(const WCHAR *);
+        RunCmd_SendInput(vt.bstrVal);
+      }
       else
         ShellExecuteW(g_hwndHostForClip, L"open", vt.bstrVal, NULL, NULL, SW_SHOWNORMAL);
       VariantClear(&vt);
@@ -1086,6 +1123,14 @@ static BOOL InstallLinkDelegate(void);
 
 BOOL Preview_SetHtml(HWND hwnd, const char *html)
 {
+  /* 回归探针：和 Preview_SetContent 里那个一样，只是整页首次渲染走的是这里 */
+  {
+    const char *dumpPath2 = getenv("N2MD_PREVIEW_DOM");
+    if (dumpPath2 && dumpPath2[0] && html) {
+      FILE *fd2 = fopen(dumpPath2,"wb");
+      if (fd2) { fwrite(html,1,strlen(html),fd2); fclose(fd2); }
+    }
+  }
   IWebBrowser2 *pWB;
   IDispatch *pDisp = NULL;
   IHTMLDocument2 *pDoc = NULL;
@@ -1233,6 +1278,19 @@ IWebBrowser2* Preview_GetBrowser(void)
 */
 BOOL Preview_SetContent(HWND hwnd, const char *fragment)
 {
+  /* 回归探针：设了 N2MD_PREVIEW_DOM 就把渲染用的 HTML 片段落盘。
+     端到端测试靠它断言「Markdown 渲染正确」「文件编码识别正确」——
+     编码识别错了，片段里就会出现乱码，一测即知。 */
+  {
+    const char *dumpPath = getenv("N2MD_PREVIEW_DOM");
+    if (dumpPath && dumpPath[0] && fragment) {
+      FILE *fd = fopen(dumpPath,"wb");
+      if (fd) {
+        fwrite(fragment,1,strlen(fragment),fd);
+        fclose(fd);
+      }
+    }
+  }
   IWebBrowser2 *pWB;
   IDispatch *pDisp = NULL;
   IHTMLDocument3 *pDoc3 = NULL;

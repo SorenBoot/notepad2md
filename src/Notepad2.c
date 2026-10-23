@@ -38,7 +38,7 @@
 #include "Markdown.h"
 #include "Preview.h"
 #include "Outline.h"
-#include "Output.h"
+#include "RunCmd.h"
 
 
 
@@ -56,13 +56,14 @@ HWND      hwndMain;
 HWND      hwndNextCBChain = NULL;
 HWND      hDlgFindReplace = NULL;
 
-#define NUMTOOLBITMAPS  24
-#define NUMINITIALTOOLS 25
+#define NUMTOOLBITMAPS  25
+#define NUMINITIALTOOLS 26
 
 TBBUTTON  tbbMainWnd[] = { {0,IDT_FILE_NEW,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {1,IDT_FILE_OPEN,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {2,IDT_FILE_BROWSE,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {3,IDT_FILE_SAVE,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
+                           {24,IDT_FILE_RUNCURRENT,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {0,0,0,TBSTYLE_SEP,0,0},
                            {4,IDT_EDIT_UNDO,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
                            {5,IDT_EDIT_REDO,TBSTATE_ENABLED,TBSTYLE_BUTTON,0,0},
@@ -166,20 +167,13 @@ BOOL      bShowStatusbar;
 /* notepad2md：实时 Markdown 预览 */
 HWND      hwndPreview = NULL;      /* MSHTML 预览窗格（隐藏时不显示） */
 HWND      hwndOutline = NULL;      /* 大纲面板 */
-HWND      hwndOutput = NULL;       /* 命令输出面板 */
 BOOL      bShowPreview = FALSE;    /* 预览是否可见 */
 BOOL      bShowOutline = FALSE;    /* 大纲面板是否可见 */
-BOOL      bShowOutput = FALSE;     /* 命令输出面板是否可见 */
 BOOL      bPreviewInited = FALSE;  /* 预览模块是否初始化成功 */
 BOOL      bPreviewDocLoaded = FALSE; /* CSS 外壳文档是否已灌入控件 */
 HWND      hwndSplitBar = NULL;     /* 编辑区/预览之间的分隔条 */
-HWND      hwndOutputSplit = NULL;  /* 编辑区/输出面板之间的横向分隔条 */
 int       iPreviewSplitPermille = 500; /* 编辑区宽度占客户区的千分比 */
-int       iOutputHeight = 180;     /* 输出面板高度（像素，可拖动） */
 BOOL      bSplitDragging = FALSE;  /* 分隔条是否处于拖动中 */
-BOOL      bOutputSplitDragging = FALSE; /* 输出分隔条是否处于拖动中 */
-BOOL      bOutputFloating = FALSE; /* 输出面板是否独立成窗口 */
-RECT      rcOutputFloat = {0,0,0,0}; /* 输出面板浮动时的窗口矩形 */
 
 /* 预览分隔条：在 MsgSize() 中布局，在各自定义处定义 */
 static LRESULT CALLBACK SplitBarWndProc(HWND,UINT,WPARAM,LPARAM);
@@ -803,10 +797,6 @@ HWND InitInstance(HINSTANCE hInstance,LPSTR pszCmdLine,int nCmdShow)
   if (bShowOutline)
     OutlineToggle(TRUE);
 
-  /* notepad2md：恢复命令输出面板开关状态 */
-  if (bShowOutput)
-    OutputToggle(TRUE);
-
   return(hwndMain);
 
 }
@@ -854,13 +844,13 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
         // Terminate file watching
         InstallFileWatching(NULL);
 
+        // notepad2md: stop running child process, drop its buffers
+        RunCmd_Shutdown();
+
         // notepad2md: release preview control
         if (IsWindow(hwndSplitBar))
           DestroyWindow(hwndSplitBar);
         hwndSplitBar = NULL;
-        if (IsWindow(hwndOutputSplit))
-          DestroyWindow(hwndOutputSplit);
-        hwndOutputSplit = NULL;
         if (IsWindow(hwndPreview))
           DestroyWindow(hwndPreview);
         hwndPreview = NULL;
@@ -873,14 +863,6 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
         if (IsWindow(hwndOutline))
           DestroyWindow(hwndOutline);
         hwndOutline = NULL;
-
-        // notepad2md: release output panel
-        /* 销毁前先取一次浮动矩形：SaveSettings() 在下面才调用，
-           那时窗口已经没了，取不到实时位置，只能拿到上次记录的。 */
-        Output_GetFloatRect(&rcOutputFloat);
-        if (IsWindow(hwndOutput))
-          DestroyWindow(hwndOutput);
-        hwndOutput = NULL;
 
         // GetWindowPlacement
         wndpl.length = sizeof(WINDOWPLACEMENT);
@@ -980,6 +962,21 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
         if (bShowOutline && IsWindow(hwndOutline))
           OutlineUpdate();
       }
+      else if (wParam == ID_RUNCMDTIMER)
+        RunCmd_Flush();
+      else if (wParam == ID_RUNCMDDOMTIMER)
+        RunCmd_OnDomTimer(hwnd);
+      else if (wParam == ID_RUNCMDINTIMER)
+        RunCmd_OnInputTimer(hwnd);
+      break;
+
+
+    case WM_RUNCMD_OUTPUT:
+      RunCmd_OnOutputMessage(wParam,lParam);
+      break;
+
+    case WM_RUNCMD_DONE:
+      RunCmd_OnDoneMessage(wParam);
       break;
 
 
@@ -1707,14 +1704,20 @@ void CreateBars(HWND hwnd,HINSTANCE hInstance)
   if (Toolbar_SetButtons(hwndToolbar,IDT_FILE_NEW,tchToolbarButtons,tbbMainWnd,COUNTOF(tbbMainWnd)) == 0)
     SendMessage(hwndToolbar,TB_ADDBUTTONS,NUMINITIALTOOLS,(LPARAM)tbbMainWnd);
 
-  else if ((int)SendMessage(hwndToolbar,TB_COMMANDTOINDEX,IDT_VIEW_MDPREVIEW,0) < 0) {
-    /* 从旧版 ini 恢复的布局里没有 MD 预览按钮 —— 补上，
-       否则升级后按钮会凭空消失 */
-    int iLook;
-    for (iLook = 0; iLook < COUNTOF(tbbMainWnd); iLook++) {
-      if (tbbMainWnd[iLook].idCommand == IDT_VIEW_MDPREVIEW) {
-        SendMessage(hwndToolbar,TB_ADDBUTTONS,(WPARAM)1,(LPARAM)&tbbMainWnd[iLook]);
-        break;
+  else {
+    /* 从旧版 ini 恢复的布局里没有新增按钮 —— 补上，
+       否则升级后按钮会凭空消失。 */
+    static const int iMustHave[] = { IDT_VIEW_MDPREVIEW, IDT_FILE_RUNCURRENT };
+    int iNeed;
+    for (iNeed = 0; iNeed < COUNTOF(iMustHave); iNeed++) {
+      if ((int)SendMessage(hwndToolbar,TB_COMMANDTOINDEX,iMustHave[iNeed],0) < 0) {
+        int iLook;
+        for (iLook = 0; iLook < COUNTOF(tbbMainWnd); iLook++) {
+          if (tbbMainWnd[iLook].idCommand == iMustHave[iNeed]) {
+            SendMessage(hwndToolbar,TB_ADDBUTTONS,(WPARAM)1,(LPARAM)&tbbMainWnd[iLook]);
+            break;
+          }
+        }
       }
     }
   }
@@ -2017,90 +2020,40 @@ static void PreviewSplitDragTo(int screenX)
   SendWMSize(hwndMain);
 }
 
-
-/* 拖动输出面板分隔条：按鼠标的屏幕 Y 换算面板高度。
-   面板贴底，所以高度 = 客户区底 - 鼠标 Y。 */
-static void OutputSplitDragTo(int screenY)
-{
-  RECT rcClient;
-  POINT pt;
-  int cy, cyOutput;
-
-  GetClientRect(hwndMain,&rcClient);
-  cy = rcClient.bottom - rcClient.top;
-  if (cy <= 0)
-    return;
-
-  pt.x = 0;
-  pt.y = screenY;
-  ScreenToClient(hwndMain,&pt);
-
-  cyOutput = (rcClient.bottom - pt.y);
-  if (cyOutput < 80)
-    cyOutput = 80;
-  if (cyOutput > cy - 120)
-    cyOutput = cy - 120;
-  if (cyOutput < 80)
-    cyOutput = 80;
-
-  if (cyOutput == iOutputHeight)
-    return;
-
-  iOutputHeight = cyOutput;
-  SendWMSize(hwndMain);
-}
-
-
 static LRESULT CALLBACK SplitBarWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
 {
-  /* 同一个窗口类给两个分隔条用：编辑/预览之间是竖的（拖宽度），
-     编辑/输出之间是横的（拖高度）。按窗口句柄区分。 */
-  BOOL bHorz = (hwnd == hwndOutputSplit);
-
+  /* 只服务编辑区/预览之间那根竖向分隔条（拖宽度）。 */
   switch(umsg)
   {
     case WM_SETCURSOR:
-      SetCursor(LoadCursor(NULL,bHorz ? IDC_SIZENS : IDC_SIZEWE));
+      SetCursor(LoadCursor(NULL,IDC_SIZEWE));
       return TRUE;
 
     case WM_LBUTTONDOWN:
-      if (bHorz)
-        bOutputSplitDragging = TRUE;
-      else
-        bSplitDragging = TRUE;
+      bSplitDragging = TRUE;
       SetCapture(hwnd);
       return 0;
 
     case WM_MOUSEMOVE:
-      if (bHorz ? bOutputSplitDragging : bSplitDragging) {
+      if (bSplitDragging) {
         POINT pt;
         pt.x = (short)LOWORD(lParam);
         pt.y = (short)HIWORD(lParam);
         ClientToScreen(hwnd,&pt);
-        if (bHorz)
-          OutputSplitDragTo(pt.y);
-        else
-          PreviewSplitDragTo(pt.x);
+        PreviewSplitDragTo(pt.x);
       }
       return 0;
 
     case WM_LBUTTONUP:
-      if (bHorz ? bOutputSplitDragging : bSplitDragging) {
-        if (bHorz)
-          bOutputSplitDragging = FALSE;
-        else
-          bSplitDragging = FALSE;
+      if (bSplitDragging) {
+        bSplitDragging = FALSE;
         ReleaseCapture();
         SaveSettings(FALSE);   /* 拖动结束才落盘，避免拖动中频繁写 ini */
       }
       return 0;
 
     case WM_LBUTTONDBLCLK:
-      /* 双击恢复默认：竖条回中，横条回 180px */
-      if (bHorz)
-        iOutputHeight = 180;
-      else
-        iPreviewSplitPermille = 500;
+      iPreviewSplitPermille = 500;
       SendWMSize(hwndMain);
       SaveSettings(FALSE);
       return 0;
@@ -2166,6 +2119,10 @@ void PreviewUpdate( void )
   KillTimer(hwndMain,ID_PREVIEWTIMER);
 
   if (!bShowPreview || !IsWindow(hwndPreview))
+    return;
+
+  /* 运行输出占着预览窗格时，别用 Markdown 把它冲掉 */
+  if (RunCmd_OutputActive())
     return;
 
   /* 复制按钮文案（跟随界面语言）→ UTF-8 */
@@ -2397,126 +2354,6 @@ void OutlineToggle( BOOL bShow )
 }
 
 
-/*
-  切换命令输出面板（编辑器底部横条）。
-*/
-/*
-  输出面板的运行前确认：文件有未保存修改时先问一句。
-
-  返回 TRUE 才让命令跑。用户选「否」就直接拒绝 —— 绝不未经允许
-  就把人家编辑器里的东西写进磁盘。
-*/
-static void UpdateOutputMenu(void);
-
-/* 独立输出窗口点了自己的关闭按钮：把它停靠回去并同步菜单。
-   不能真销毁 —— 主窗口的 hwndOutput 会变野指针。 */
-static void OutputOnClose(void *pUser)
-{
-  (void)pUser;
-  Output_GetFloatRect(&rcOutputFloat);   /* 停靠前先记下浮动矩形 */
-  bOutputFloating = FALSE;
-  if (IsWindow(hwndOutputSplit))
-    ShowWindow(hwndOutputSplit,SW_SHOW);
-  UpdateOutputMenu();
-  SendWMSize(hwndMain);
-  SaveSettings(FALSE);
-}
-
-
-static BOOL OutputBeforeRun(void *pUser)
-{
-  (void)pUser;
-
-  int iRet;
-
-  if (!bModified)
-    return TRUE;
-
-  /* 三选：是 = 先保存再跑；否 = 不保存，按磁盘旧内容跑；
-     取消 = 本次不跑。取消必须拦住，否则用户以为没执行。 */
-  iRet = MsgBox(MBYESNOCANCEL,IDS_ASK_SAVE_BEFORE_RUN);
-  if (iRet == IDYES) {
-    if (!FileSave(TRUE,FALSE,FALSE,FALSE))
-      return FALSE;      /* 保存失败（比如用户取消了保存对话框）就别跑 */
-    return TRUE;
-  }
-  if (iRet == IDNO)
-    return TRUE;         /* 用户明知道有未保存修改仍要跑，尊重 */
-  return FALSE;          /* IDCANCEL */
-}
-
-
-/* 同步输出面板相关的菜单勾选/启用状态。
-   两个方向互斥：已经浮动了，「独立」就没得再点。 */
-static void UpdateOutputMenu(void)
-{
-  HMENU hmenu = GetMenu(hwndMain);
-  if (!hmenu)
-    return;
-  CheckCmd(hmenu,IDM_VIEW_OUTPUT,bShowOutput);
-  CheckCmd(hmenu,IDM_OUTPUT_FLOAT,bShowOutput && bOutputFloating);
-  CheckCmd(hmenu,IDM_OUTPUT_DOCK,bShowOutput && !bOutputFloating);
-}
-
-
-void OutputToggle( BOOL bShow )
-{
-  RECT rc;
-
-  if (bShow == bShowOutput && !(bShow && !IsWindow(hwndOutput)))
-    return;
-
-  if (bShow) {
-    if (!IsWindow(hwndOutput)) {
-      if (!Output_Init(g_hInstance))
-        return;
-      hwndOutput = Output_Create(hwndMain,g_hInstance);
-      if (!hwndOutput) {
-        MsgBox(MBWARN,IDS_PREVIEW_ERROR);
-        bShowOutput = FALSE;
-        return;
-      }
-      /* 装上「未保存先问一句」的钩子 */
-      Output_SetRunHook(OutputBeforeRun,NULL);
-      Output_SetCloseHook(OutputOnClose,NULL);
-      Output_SetCurrentFile(szCurFile);
-      Output_SetFloatRect(&rcOutputFloat);   /* 恢复上次的浮动窗口位置 */
-    }
-    /* 分隔条：只有嵌入状态才需要，独立窗口自己带边框 */
-    if (!bOutputFloating) {
-      if (!IsWindow(hwndOutputSplit))
-        hwndOutputSplit = CreateWindowEx(0,WC_NOTEPAD2_SPLITTER,NULL,
-                                         WS_CHILD | WS_VISIBLE,
-                                         0,0,0,0,hwndMain,NULL,g_hInstance,NULL);
-      if (IsWindow(hwndOutputSplit))
-        ShowWindow(hwndOutputSplit,SW_SHOW);
-    }
-    ShowWindow(hwndOutput,SW_SHOW);
-  }
-  else {
-    if (IsWindow(hwndOutputSplit))
-      ShowWindow(hwndOutputSplit,SW_HIDE);
-    if (IsWindow(hwndOutput))
-      ShowWindow(hwndOutput,SW_HIDE);
-  }
-
-  /* 先置位再布局，MsgSize 里要靠这个标志决定是否给输出面板留位置 */
-  bShowOutput = bShow;
-
-  /* 面板重新打开时沿用上次的浮动状态 */
-  if (bShow && IsWindow(hwndOutput))
-    Output_SetFloating(bOutputFloating);
-
-  UpdateOutputMenu();
-
-  IniSetInt(L"Settings",L"ShowOutput",bShowOutput);
-  IniSetInt(L"Settings",L"OutputFloating",bOutputFloating);
-
-  GetClientRect(hwndMain,&rc);
-  MsgSize(hwndMain,SIZE_RESTORED,MAKELONG(rc.right,rc.bottom));
-}
-
-
 void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
 {
 
@@ -2563,30 +2400,6 @@ void MsgSize(HWND hwnd,WPARAM wParam,LPARAM lParam)
   }
 
   hdwp = BeginDeferWindowPos(6);
-
-  /* 命令输出面板：占客户区底部，高度可拖动；窗口太矮时压缩。
-     独立成窗口时不占客户区，什么都不用留。 */
-  if (bShowOutput && IsWindow(hwndOutput) && !bOutputFloating)
-  {
-    int cyOutput = iOutputHeight;
-    if (cyOutput > cy / 2)
-      cyOutput = cy / 2;
-    if (cyOutput < 80)
-      cyOutput = 80;
-    if (cyOutput > cy - 120)
-      cyOutput = cy - 120;
-    if (cyOutput < 80)
-      cyOutput = 80;
-
-    /* 分隔条贴在面板上沿，占 SPLITTER 那几像素 */
-    if (IsWindow(hwndOutputSplit))
-      DeferWindowPos(hdwp,hwndOutputSplit,NULL,x,y + cy - cyOutput - OUTPUT_SPLITTER_HEIGHT,cx,
-                     OUTPUT_SPLITTER_HEIGHT,SWP_NOZORDER | SWP_NOACTIVATE);
-
-    DeferWindowPos(hdwp,hwndOutput,NULL,x,y + cy - cyOutput,cx,cyOutput,
-                   SWP_NOZORDER | SWP_NOACTIVATE);
-    cy -= cyOutput + OUTPUT_SPLITTER_HEIGHT;
-  }
 
   /* 大纲面板：固定在编辑区左侧，不参与编辑/预览的分栏计算。
      宽度固定 OUTLINE_PANEL_WIDTH；窗口太窄时压缩，避免挤爆编辑区。 */
@@ -2809,7 +2622,6 @@ void MsgInitMenu(HWND hwnd,WPARAM wParam,LPARAM lParam)
   CheckCmd(hmenu,IDM_VIEW_WORDWRAP,fWordWrap);
   CheckCmd(hmenu,IDM_VIEW_MDPREVIEW,bShowPreview);
   CheckCmd(hmenu,IDM_VIEW_OUTLINE,bShowOutline);
-  CheckCmd(hmenu,IDM_VIEW_OUTPUT,bShowOutput);
   CheckCmd(hmenu,IDM_VIEW_LONGLINEMARKER,bMarkLongLines);
   CheckCmd(hmenu,IDM_VIEW_TABSASSPACES,bTabsAsSpaces);
   CheckCmd(hmenu,IDM_VIEW_SHOWINDENTGUIDES,bShowIndentGuides);
@@ -3156,6 +2968,13 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
 
         ShellExecuteEx(&sei);
       }
+      break;
+
+
+    case IDM_FILE_RUNCURRENT:
+      /* 运行当前文件，输出进预览窗格（不弹对话框）*/
+      RunCmd_SetCurrentFile(szCurFile);
+      RunCmd_Run(hwnd,TRUE);
       break;
 
 
@@ -4586,93 +4405,6 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
       break;
 
 
-    case IDM_VIEW_OUTPUT:
-      OutputToggle(!bShowOutput);
-      break;
-
-
-    case IDM_OUTPUT_FLOAT:
-      /* 独立成窗口：先把面板叫出来，再切浮动。
-         面板没显示时直接切是没意义的 —— 用户看不到任何反应。 */
-      if (!bShowOutput)
-        OutputToggle(TRUE);
-      if (bShowOutput && IsWindow(hwndOutput) && !Output_IsFloating()) {
-        Output_SetFloating(TRUE);
-        bOutputFloating = TRUE;
-        Output_GetFloatRect(&rcOutputFloat);
-        if (IsWindow(hwndOutputSplit))
-          ShowWindow(hwndOutputSplit,SW_HIDE);
-        UpdateOutputMenu();
-        SendWMSize(hwndMain);
-        SaveSettings(FALSE);
-      }
-      break;
-
-
-    case IDM_OUTPUT_DOCK:
-      if (bShowOutput && IsWindow(hwndOutput) && Output_IsFloating()) {
-        Output_GetFloatRect(&rcOutputFloat);   /* 停靠前先记下浮动矩形 */
-        Output_SetFloating(FALSE);
-        bOutputFloating = FALSE;
-        if (IsWindow(hwndOutputSplit))
-          ShowWindow(hwndOutputSplit,SW_SHOW);
-        UpdateOutputMenu();
-        SendWMSize(hwndMain);
-        SaveSettings(FALSE);
-      }
-      break;
-
-
-    case IDM_OUTPUT_GOTOLINE:
-      {
-        /* 输出面板里双击了一行：lParam 是输出框中的行索引。
-           输出模块已把该行识别为「文件:行号」，此处按行号定位编辑器。 */
-        int iLineIdx = (int)lParam;
-        WCHAR wszFile[MAX_PATH];
-        int iLine;
-
-        if (Output_GetGotoTarget(iLineIdx,wszFile,COUNTOF(wszFile),&iLine) &&
-            iLine > 0) {
-          /* 判断目标是否就是当前文件：直接比字符串可能因大小写/路径形式
-             不同而误判（尤其是从命令行传来的路径），所以用完整路径规范化后
-             再比一次。仍不一致才去打开文件。 */
-          BOOL bSame = (lstrcmpi(wszFile,szCurFile) == 0);
-          if (!bSame && lstrlen(szCurFile)) {
-            WCHAR wszA[MAX_PATH], wszB[MAX_PATH];
-            lstrcpyn(wszA,wszFile,COUNTOF(wszA));
-            lstrcpyn(wszB,szCurFile,COUNTOF(wszB));
-            PathFixBackslashes(wszA);
-            PathFixBackslashes(wszB);
-            bSame = (lstrcmpi(wszA,wszB) == 0);
-          }
-          if (!bSame) {
-            WCHAR wszFull[MAX_PATH];
-            if (PathIsRelative(wszFile)) {
-              lstrcpy(wszFull,g_wchWorkingDirectory);
-              lstrcat(wszFull,L"\\");
-              lstrcat(wszFull,wszFile);
-            }
-            else
-              lstrcpyn(wszFull,wszFile,COUNTOF(wszFull));
-            if (PathFileExists(wszFull))
-              FileLoad(TRUE,FALSE,FALSE,FALSE,wszFull);
-          }
-          {
-            /* 顺序很重要：先定位再给焦点。
-               若先 SetFocus，Scintilla 会把 caret 恢复到焦点前的位置，
-               之后的 GOTOPOS 虽生效但紧接着又被 UI 刷新拉回，表现为没跳。 */
-            {
-              int iPos = (int)SendMessage(hwndEdit,SCI_POSITIONFROMLINE,iLine - 1,0);
-              SendMessage(hwndEdit,SCI_GOTOPOS,iPos,0);
-              SendMessage(hwndEdit,SCI_SETSEL,(WPARAM)iPos,(LPARAM)iPos);
-            }
-            SetFocus(hwndEdit);
-          }
-        }
-      }
-      break;
-
-
     case IDM_OUTLINE_GOTO:
       {
         /* 大纲项被双击：lParam 是列表索引（Outline.c 发来的） */
@@ -4863,6 +4595,11 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
 
 
     case CMD_ESCAPE:
+      /* 有进程在跑：Esc 先当「停止」（符合终端直觉），不抢原有行为 */
+      if (RunCmd_IsRunning()) {
+        RunCmd_Stop();
+        break;
+      }
       if (iEscFunction == 1)
         SendMessage(hwnd,WM_SYSCOMMAND,SC_MINIMIZE,0);
       else if (iEscFunction == 2)
@@ -5416,6 +5153,11 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
       break;
 
 
+    case IDT_FILE_RUNCURRENT:
+      SendMessage(hwnd,WM_COMMAND,MAKELONG(IDM_FILE_RUNCURRENT,1),0);
+      break;
+
+
     case IDT_EDIT_UNDO:
       if (IsCmdEnabled(hwnd,IDM_EDIT_UNDO))
         SendMessage(hwnd,WM_COMMAND,MAKELONG(IDM_EDIT_UNDO,1),0);
@@ -5599,29 +5341,6 @@ LRESULT MsgNotify(HWND hwnd,WPARAM wParam,LPARAM lParam)
           /* 纯滚动不触发下面的重排版分支，单独处理同步滚动 */
           if (scn->updated & SC_UPDATE_V_SCROLL)
             PreviewSyncScroll();
-
-          /* notepad2md：把光标行号/选区告诉输出面板，供 %LINE% %SEL% 使用 */
-          if (bShowOutput) {
-            int iCurPos  = (int)SendMessage(hwndEdit,SCI_GETCURRENTPOS,0,0);
-            int iSelFrom = (int)SendMessage(hwndEdit,SCI_GETSELECTIONSTART,0,0);
-            int iSelTo   = (int)SendMessage(hwndEdit,SCI_GETSELECTIONEND,0,0);
-            int iLine    = (int)SendMessage(hwndEdit,SCI_LINEFROMPOSITION,(WPARAM)iCurPos,0) + 1;
-            Output_SetEditorState(iLine,iSelFrom,iSelTo);
-            if (iSelTo > iSelFrom) {
-              WCHAR *pwch = LocalAlloc(LPTR,(iSelTo - iSelFrom + 1) * sizeof(WCHAR));
-              if (pwch) {
-                int n = (int)SendMessage(hwndEdit,SCI_GETSELTEXT,0,(LPARAM)pwch);
-                if (n > 0)
-                  Output_SetSelection(pwch);
-                else
-                  Output_SetSelection(L"");
-                LocalFree(pwch);
-              }
-            }
-            else
-              Output_SetSelection(L"");
-          }
-
           if (scn->updated & ~(SC_UPDATE_V_SCROLL | SC_UPDATE_H_SCROLL)) {
 
             UpdateToolbar();
@@ -6176,32 +5895,10 @@ void LoadSettings()
 
   /* 面板开关也要在这里读一遍：InitInstance() 恢复面板状态时
      菜单还没初始化过，光靠 MsgInitMenu() 里那次读是读不到的 ——
-     结果就是 ShowOutline / ShowOutput 存了等于没存。 */
+     结果就是 ShowOutline 存了等于没存。 */
   bShowOutline = IniSectionGetInt(pIniSection,L"ShowOutline",0);
   if (bShowOutline) bShowOutline = 1;
 
-  bShowOutput = IniSectionGetInt(pIniSection,L"ShowOutput",0);
-  if (bShowOutput) bShowOutput = 1;
-
-  bOutputFloating = IniSectionGetInt(pIniSection,L"OutputFloating",0);
-  if (bOutputFloating) bOutputFloating = 1;
-
-  /* 浮动窗口矩形：任一边为 0 或反了就当作没存过，面板浮到默认位置。
-     别把垃圾值直接灌给 SetWindowPos —— 会跑到屏幕外面去。 */
-  rcOutputFloat.left   = IniSectionGetInt(pIniSection,L"OutputFloatX",0);
-  rcOutputFloat.top    = IniSectionGetInt(pIniSection,L"OutputFloatY",0);
-  rcOutputFloat.right  = rcOutputFloat.left + IniSectionGetInt(pIniSection,L"OutputFloatW",0);
-  rcOutputFloat.bottom = rcOutputFloat.top  + IniSectionGetInt(pIniSection,L"OutputFloatH",0);
-  if (rcOutputFloat.right <= rcOutputFloat.left ||
-      rcOutputFloat.bottom <= rcOutputFloat.top)
-    SetRectEmpty(&rcOutputFloat);
-
-  iPreviewSplitPermille = IniSectionGetInt(pIniSection,L"PreviewSplitPermille",500);
-  if (iPreviewSplitPermille < 50) iPreviewSplitPermille = 50;
-  if (iPreviewSplitPermille > 950) iPreviewSplitPermille = 950;
-
-  iOutputHeight = IniSectionGetInt(pIniSection,L"OutputHeight",180);
-  if (iOutputHeight < 80) iOutputHeight = 80;
 
   cxEncodingDlg = IniSectionGetInt(pIniSection,L"EncodingDlgSizeX",256);
   cxEncodingDlg = max(cxEncodingDlg,0);
@@ -6394,19 +6091,6 @@ void SaveSettings(BOOL bSaveSettingsNow)
   IniSectionSetInt(pIniSection,L"ShowStatusbar",bShowStatusbar);
   IniSectionSetInt(pIniSection,L"MarkdownPreview",bShowPreview);
   IniSectionSetInt(pIniSection,L"ShowOutline",bShowOutline);
-  IniSectionSetInt(pIniSection,L"ShowOutput",bShowOutput);
-  IniSectionSetInt(pIniSection,L"OutputFloating",bOutputFloating);
-  /* 用 rcOutputFloat：它在 WM_DESTROY 里销毁面板之前已经取过实时值，
-     而且每次切浮动/停靠都会刷新。这里再调一次 Output_GetFloatRect
-     是没用的 —— 走到这一步窗口通常已经销毁了。 */
-  if (!IsRectEmpty(&rcOutputFloat)) {
-    IniSectionSetInt(pIniSection,L"OutputFloatX",rcOutputFloat.left);
-    IniSectionSetInt(pIniSection,L"OutputFloatY",rcOutputFloat.top);
-    IniSectionSetInt(pIniSection,L"OutputFloatW",rcOutputFloat.right - rcOutputFloat.left);
-    IniSectionSetInt(pIniSection,L"OutputFloatH",rcOutputFloat.bottom - rcOutputFloat.top);
-  }
-  IniSectionSetInt(pIniSection,L"PreviewSplitPermille",iPreviewSplitPermille);
-  IniSectionSetInt(pIniSection,L"OutputHeight",iOutputHeight);
   IniSectionSetInt(pIniSection,L"EncodingDlgSizeX",cxEncodingDlg);
   IniSectionSetInt(pIniSection,L"EncodingDlgSizeY",cyEncodingDlg);
   IniSectionSetInt(pIniSection,L"RecodeDlgSizeX",cxRecodeDlg);
@@ -7343,7 +7027,7 @@ BOOL FileLoad(BOOL bDontSave,BOOL bNew,BOOL bReload,BOOL bNoEncDetect,LPCWSTR lp
 
   if (bNew) {
     lstrcpy(szCurFile,L"");
-    Output_SetCurrentFile(L"");
+    RunCmd_SetCurrentFile(L"");
     SetDlgItemText(hwndMain,IDC_FILENAME,szCurFile);
     SetDlgItemInt(hwndMain,IDC_REUSELOCK,GetTickCount(),FALSE);
     if (!fKeepTitleExcerpt)
@@ -7498,7 +7182,6 @@ BOOL FileLoad(BOOL bDontSave,BOOL bNew,BOOL bReload,BOOL bNoEncDetect,LPCWSTR lp
     OutlineUpdate();
 
   /* notepad2md：同步输出面板的 %FILE% 变量 */
-  Output_SetCurrentFile(szCurFile);
 
   return(fSuccess);
 }
@@ -7585,7 +7268,7 @@ BOOL FileSave(BOOL bSaveAlways,BOOL bAsk,BOOL bSaveAs,BOOL bSaveCopy)
         if (!bSaveCopy)
         {
           lstrcpy(szCurFile,tchFile);
-          Output_SetCurrentFile(szCurFile);
+          RunCmd_SetCurrentFile(szCurFile);
           SetDlgItemText(hwndMain,IDC_FILENAME,szCurFile);
           SetDlgItemInt(hwndMain,IDC_REUSELOCK,GetTickCount(),FALSE);
           if (!fKeepTitleExcerpt)
