@@ -49,7 +49,7 @@ extern int   iTabWidth;
 #define RID_INI      63015
 #define RID_SQL      63018
 #define RID_JSON     63022
-#define RID_LOG      63025
+#define RID_LOG      63028
 
 /* 8 MB 起提醒确认，16 MB 以上直接拒绝 —— 引擎上限(FMT_MAX_INPUT)也设为 16 MB */
 #define FMT_BIGFILE_WARN  (8*1024*1024)

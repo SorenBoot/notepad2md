@@ -727,7 +727,7 @@ EDITLEXER lexINI = { SCLEX_PROPERTIES, 63015, L"Configuration Files", L"ini; inf
                      { STYLE_DEFAULT, 63126, L"Default", L"", L"" },
                      //{ SCE_PROPS_DEFAULT, L"Default", L"", L"" },
                      { SCE_PROPS_COMMENT, 63127, L"Comment", L"fore:#008000", L"" },
-                     { SCE_PROPS_SECTION, 63232, L"Section", L"bold; fore:#000000; back:#FFD24D; eolfilled", L"" },
+                     { SCE_PROPS_SECTION, 63232, L"Section", L"bold; fore:#5A3E00", L"" },
                      { SCE_PROPS_ASSIGNMENT, 63233, L"Assignment", L"fore:#FF0000", L"" },
                      { SCE_PROPS_DEFVAL, 63234, L"Default Value", L"fore:#FF0000", L"" },
                      { -1, 00000, L"", L"", L"" } } };
@@ -1034,20 +1034,20 @@ KEYWORDLIST KeyWords_LOG = {
 "", "", "", "", "", "", "", "", "" };
 
 
-EDITLEXER lexLOG = { SCLEX_LOG, 63025, L"Log", L"log; logfile", L"", &KeyWords_LOG, {
+EDITLEXER lexLOG = { SCLEX_LOG, 63028, L"Log", L"log; logfile", L"", &KeyWords_LOG, {
                       { STYLE_DEFAULT, 63269, L"Default", L"", L"" },
-                      { SCE_LOG_DATE, 63270, L"Date/Time", L"fore:#008080", L"" },
+                      { SCE_LOG_DATE, 63270, L"Date/Time", L"fore:#6A6A6A", L"" },
                       { SCE_LOG_LEVEL_FATAL, 63271, L"Level: Fatal", L"bold; fore:#FFFFFF; back:#B00020", L"" },
                       { SCE_LOG_LEVEL_ERROR, 63272, L"Level: Error", L"bold; fore:#C00000", L"" },
                       { SCE_LOG_LEVEL_WARN, 63273, L"Level: Warning", L"bold; fore:#A66000", L"" },
                       { SCE_LOG_LEVEL_INFO, 63274, L"Level: Info", L"fore:#007A33", L"" },
-                      { SCE_LOG_LEVEL_DEBUG, 63275, L"Level: Debug/Trace", L"fore:#6A6A6A", L"" },
-                      { SCE_LOG_NUMBER, 63276, L"Number/IP", L"fore:#FF0000", L"" },
-                      { SCE_LOG_STRING, 63277, L"String", L"fore:#808000", L"" },
-                      { SCE_LOG_PATH, 63278, L"Path", L"fore:#7A3E9D", L"" },
-                      { SCE_LOG_KEY, 63279, L"Key", L"fore:#0A246A", L"" },
+                      { SCE_LOG_LEVEL_DEBUG, 63275, L"Level: Debug/Trace", L"fore:#9A9A9A", L"" },
+                      { SCE_LOG_NUMBER, 63276, L"Number/IP", L"fore:#8A8A8A", L"" },
+                      { SCE_LOG_STRING, 63277, L"String", L"fore:#7B6B3A", L"" },
+                      { SCE_LOG_PATH, 63278, L"Path", L"fore:#5C5C5C", L"" },
+                      { SCE_LOG_KEY, 63279, L"Key", L"fore:#3A5A8A", L"" },
                       { SCE_LOG_COMMENT, 63280, L"Comment", L"fore:#646464", L"" },
-                      { SCE_LOG_CONTEXT, 63281, L"Thread/Context", L"fore:#3F5F9F", L"" },
+                      { SCE_LOG_CONTEXT, 63281, L"Thread/Context", L"fore:#6A7A9A", L"" },
                       { -1, 00000, L"", L"", L"" } } };
 
 
@@ -1176,6 +1176,57 @@ extern int  iDefaultCharSet;
 extern BOOL bHiliteCurrentLine;
 
 
+/* 一次性迁移：v0.0.2 后期把日志配色降饱和、INI 段头去背景。
+   ini 里若还缓存着「恰好等于旧默认值」的项就重置为新默认；
+   用户自己改过的颜色不动。无 ini 或内存模式时无事发生。 */
+static void Style_MigrateStaleColors(void)
+{
+  static const struct { LPCWSTR pszLex; LPCWSTR pszStyle; LPCWSTR pszOld; } stale[] = {
+    { L"Log", L"Date/Time", L"fore:#008080" },
+    { L"Log", L"Level: Debug/Trace", L"fore:#6A6A6A" },
+    { L"Log", L"Number/IP", L"fore:#FF0000" },
+    { L"Log", L"String", L"fore:#808000" },
+    { L"Log", L"Path", L"fore:#7A3E9D" },
+    { L"Log", L"Key", L"fore:#0A246A" },
+    { L"Log", L"Thread/Context", L"fore:#3F5F9F" },
+    { L"Configuration Files", L"Section", L"bold; fore:#000000; back:#FFD24D; eolfilled" },
+  };
+  int iLexer;
+  if (!lstrlen(szIniFile))
+    return;
+  for (iLexer = 0; iLexer < NUMLEXERS; iLexer++) {
+    int k = 0, i;
+    BOOL bDirty = FALSE;
+    for (k = 0; k < (int)(sizeof(stale)/sizeof(stale[0])); k++) {
+      if (lstrcmpi(pLexArray[iLexer]->pszName,stale[k].pszLex) != 0)
+        continue;
+      i = 0;
+      while (pLexArray[iLexer]->Styles[i].iStyle != -1) {
+        if (lstrcmp(pLexArray[iLexer]->Styles[i].pszName,stale[k].pszStyle) == 0 &&
+            lstrcmp(pLexArray[iLexer]->Styles[i].szValue,stale[k].pszOld) == 0) {
+          lstrcpyn(pLexArray[iLexer]->Styles[i].szValue,
+            pLexArray[iLexer]->Styles[i].pszDefault,
+            COUNTOF(pLexArray[iLexer]->Styles[i].szValue));
+          bDirty = TRUE;
+        }
+        i++;
+      }
+    }
+    if (bDirty) {
+      WCHAR *pSect = LocalAlloc(LPTR,sizeof(WCHAR)*32*1024);
+      int   cchSect = (int)LocalSize(pSect)/sizeof(WCHAR);
+      IniSectionSetString(pSect,L"FileNameExtensions",pLexArray[iLexer]->szExtensions);
+      i = 0;
+      while (pLexArray[iLexer]->Styles[i].iStyle != -1) {
+        IniSectionSetString(pSect,pLexArray[iLexer]->Styles[i].pszName,pLexArray[iLexer]->Styles[i].szValue);
+        i++;
+      }
+      SaveIniSection(pLexArray[iLexer]->pszName,pSect);
+      LocalFree(pSect);
+    }
+  }
+}
+
 //=============================================================================
 //
 //  Style_Load()
@@ -1289,7 +1340,10 @@ void Style_Load()
       }
     }
   }
+
+  Style_MigrateStaleColors();
 }
+
 
 
 //=============================================================================
