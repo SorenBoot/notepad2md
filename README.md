@@ -15,9 +15,9 @@ notepad2md 是 [Notepad2 4.2.25](https://www.flos-freeware.ch/) 的二次开发�
 原版全部编辑能力的前提下，加入了：
 
 - Markdown 实时预览
-- 无 BOM 编码自动识别（UTF-8 / GBK / Big5 等，原版会乱码）
+- 无 BOM 编码自动识别
 - JSON / XML / SQL / INI / TOML 格式化与校验
-- `.log` 日志语法高亮
+- 日志语法高亮
 - 双击选词、全文同词高亮
 - 一键运行当前文件（带输出面板）
 - 简体中文界面
@@ -43,7 +43,7 @@ notepad2md 是 [Notepad2 4.2.25](https://www.flos-freeware.ch/) 的二次开发�
 
 - 支持：**JSON / JSONC / JSON5 / JSON Lines**、**XML / HTML**、**SQL**、**INI / TOML / .env**
 - 按当前文件的语法方案自动选择；拿不准时按内容嗅探
-- 只重新摆放空白，不改任何字节 —— 键顺序、数字形式、大整数精度、注释等全部原样保留
+- 只重排空白，不改任何内容
 - 有选区只处理选区
 - 行尾沿用文件原有风格；缩进跟随当前 Tab 设置
 - 出错时原文一个字节都不动，弹窗给出「第几行第几列」
@@ -51,7 +51,7 @@ notepad2md 是 [Notepad2 4.2.25](https://www.flos-freeware.ch/) 的二次开发�
 
 ### 日志语法高亮
 
-`.log` / `.logfile` 文件，以及无扩展名的 `messages` / `syslog` / `dmesg` 等，自动按「日志」方案着色：
+`.log` / `.logfile`，以及无扩展名的 `messages` / `syslog` / `dmesg` 等日志文件，自动着色：
 
 - 日期时间（`2024-01-01 10:00:00` / ISO / 毫秒 / 时区 / 月份缩写）
 - 四档级别配色：FATAL（红底）、ERROR（红）、WARN（橙）、INFO（绿）、DEBUG/TRACE（灰）
@@ -80,7 +80,7 @@ notepad2md 是 [Notepad2 4.2.25](https://www.flos-freeware.ch/) 的二次开发�
 ### 编码处理
 
 - 打开时自动识别编码 —— 无 BOM 的 UTF-8 / GBK / Big5 / Shift-JIS / EUC-KR 均可正确识别
-- 只读文件头 64 KB 做判断，大文件不会卡顿
+- 大文件不会卡顿
 - 猜错可手动重新打开（`Ctrl+Shift+A` / `Ctrl+Shift+O` / `Ctrl+Shift+F` / `Shift+F8`）
 - `F8` 转换编码保存，`F9` 选择编码
 
