@@ -73,7 +73,8 @@ static int FormatKindFromLexer(void)
     case RID_HTML: return FMT_KIND_HTML;  /* XML 的宽松变体：void 元素可以不写 /> */
     case RID_SQL:  return FMT_KIND_SQL;
     case RID_INI:  return FMT_KIND_INI;
-    case RID_LOG:  return FMT_KIND_LOG;   /* 日志：只整理空白 */
+    /* RID_LOG（日志方案）不提供格式化：日志只做配色，
+       格式化会改坏日志的行结构，且 README 已声明不支持 */
   }
 
   return FMT_KIND_NONE;
@@ -210,16 +211,10 @@ void FormatDoCmd(HWND hwnd,int iCmd)
   /* --- 判断类型：看当前语法方案，认不出时再按内容猜 --- */
   iKind = FormatKindFromLexer();
 
-  if (iKind == FMT_KIND_LOG) {
-    /* .log / 纯文本：内容像 JSON/XML/SQL/INI 就按那个来，
-       否则才当日志整理空白（日志里嵌 JSON 片段很常见）*/
-    int iSniff = Fmt_DetectKind(pIn,cbIn);
-    if (iSniff != FMT_KIND_NONE)
-      iKind = iSniff;
-  }
-  else if (iKind == FMT_KIND_NONE && FormatLexerIsPlain()) {
+  if (iKind == FMT_KIND_NONE && FormatLexerIsPlain()) {
+    /* 纯文本（.txt / 无扩展名）：内容像 JSON/XML/SQL/INI 就按那个来，
+       否则按日志整理空白。日志方案（.log）本身不格式化，走「不支持」 */
     iKind = Fmt_DetectKind(pIn,cbIn);
-    /* 纯文本：猜不出也至少能整理空白 */
     if (iKind == FMT_KIND_NONE)
       iKind = FMT_KIND_LOG;
   }

@@ -299,32 +299,17 @@ def run_all(exe, verbose):
              [IDM_FORMAT_DOC], b'{\r\n  "a": 1\r\n}\r\n')
 
     print("[日志]")
-    run_case(ed, "log 去掉行尾空白、保留缩进", "a.log",
-             b'2024-01-01 10:00:00 INFO  start   \n'
-             b'    at com.foo.Bar(Bar.java:42)  \n'
-             b'2024-01-01 10:00:01 ERROR boom\t\n',
-             [IDM_FORMAT_DOC],
-             b'2024-01-01 10:00:00 INFO  start\n'
-             b'    at com.foo.Bar(Bar.java:42)\n'
-             b'2024-01-01 10:00:01 ERROR boom\n')
+    # .log 不再提供格式化（只做配色），按 Ctrl+Alt+F 应当报"不支持"且文件不动
+    log_raw = b'2024-01-01 10:00:00 INFO  start   \n'
+    run_case(ed, "log 不提供格式化（报不支持，文件不动）", "a.log",
+             log_raw, [IDM_FORMAT_DOC], log_raw)
+    run_case(ed, "log 不提供压缩（报不支持，文件不动）", "b.log",
+             log_raw, [IDM_FORMAT_MINIFY], log_raw)
 
-    run_case(ed, "log 连续空行压成一个", "b.log",
-             b'\n\n\na\n\n\n\nb\n\n\n',
-             [IDM_FORMAT_DOC], b'a\n\nb\n')
-
-    run_case(ed, "log 压缩只丢空行", "c.log",
-             b'a\n\n\nb   \n',
-             [IDM_FORMAT_MINIFY], b'a\nb\n')
-
-    # .log 里整篇是 JSON：按 JSON 格式化，不当成日志整理
-    run_case(ed, "log 里的 JSON 按 JSON 处理", "d.log",
-             b'{"a":1,"b":[1,2]}\n',
-             [IDM_FORMAT_DOC], b'{\n  "a": 1,\n  "b": [1, 2]\n}\n')
-
-    # 空文档 / 只有空白的 log 不该被改坏
-    run_case(ed, "log 只有空白", "e.log",
-             b'   \n\t\n',
-             [IDM_FORMAT_DOC], b'\n')
+    # .log 里整篇是 JSON：也不该格式化（.log 方案一律不支持）
+    run_case(ed, "log 里的 JSON 也不格式化", "d.log",
+             b'{"a":1,"b":[1,2]}\n', [IDM_FORMAT_DOC],
+             b'{"a":1,"b":[1,2]}\n')
 
     print("[校验]")
     run_case(ed, "坏 JSON 校验报错且不改文件", "bad.json",
