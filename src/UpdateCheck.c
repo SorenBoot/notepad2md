@@ -320,3 +320,188 @@ int UpdateExtractTagFromUrl(const char *pszUrl,char *pszOut,int cchOut)
   pszOut[i] = '\0';
   return (i > 0) ? 1 : 0;
 }
+
+// 大小写无关比较，比较前 n 个字符（n == -1 时比到结尾）
+static int StrcmpNIA(const char *pszA,const char *pszB,int n)
+{
+  int i = 0;
+  if (!pszA || !pszB)
+    return pszA == pszB ? 0 : 1;
+  for (;;) {
+    unsigned char a = (unsigned char)pszA[i],b = (unsigned char)pszB[i];
+    if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
+    if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
+    if (n >= 0 && i >= n)
+      return 0;
+    if (a != b)
+      return (int)a - (int)b;
+    if (a == 0)
+      return 0;
+    i++;
+  }
+}
+
+static int Strcasecmp(const char *pszA,const char *pszB)
+{
+  return StrcmpNIA(pszA,pszB,-1);
+}
+
+//=============================================================================
+//
+//  UpdateNormalizeProxy()
+//
+//  把各种写法的代理转成 WinINet 认的格式：
+//    http://127.0.0.1:10809/  ->  http://127.0.0.1:10809
+//    127.0.0.1:10809          ->  http://127.0.0.1:10809
+//    socks5://127.0.0.1:1080  ->  socks=127.0.0.1:1080
+//    socks://...              ->  socks=...
+//  返回 1 = 拿到可用代理；0 = 空值/不认得的写法。
+//
+int UpdateNormalizeProxy(const char *pszRaw,char *pszOut,int cchOut)
+{
+  const char *p;
+  int i = 0,bSocks = 0;
+
+  if (!pszOut || cchOut < 2)
+    return 0;
+  pszOut[0] = '\0';
+  if (!pszRaw)
+    return 0;
+
+  p = pszRaw;
+  while (*p == ' ' || *p == '\t')
+    p++;
+
+  if (0 == StrcmpNIA(p,"http://",7))
+    p += 7;
+  else if (0 == StrcmpNIA(p,"https://",8))
+    p += 8;
+  else if (0 == StrcmpNIA(p,"socks5h://",10)) {
+    p += 10;
+    bSocks = 1;
+  }
+  else if (0 == StrcmpNIA(p,"socks5://",9)) {
+    p += 9;
+    bSocks = 1;
+  }
+  else if (0 == StrcmpNIA(p,"socks://",8)) {
+    p += 8;
+    bSocks = 1;
+  }
+
+  {
+    // WinINet 认 URL 形式：http://host:port 对 http 与 https 都适用；
+    // socks 需要 socks=host:port。
+    const char *pfx = bSocks ? "socks=" : "http://";
+    while (*pfx && i < cchOut - 1)
+      pszOut[i++] = *pfx++;
+  }
+
+  // 去掉尾部斜杠和空白；中间出现空白就认为写坏了
+  {
+    const char *pEnd = p + (int)strlen(p);
+    while (pEnd > p && (pEnd[-1] == '/' || pEnd[-1] == ' ' || pEnd[-1] == '\t'))
+      pEnd--;
+    if (pEnd == p)
+      return 0;
+    while (p < pEnd) {
+      if (*p == ' ' || *p == '\t') {
+        pszOut[0] = '\0';
+        return 0;
+      }
+      if (i >= cchOut - 1)
+        break;
+      pszOut[i++] = *p++;
+    }
+  }
+
+  pszOut[i] = '\0';
+  return (i > 0) ? 1 : 0;
+}
+
+//=============================================================================
+//
+//  UpdateHostBypassed()
+//
+//  NO_PROXY 的简易匹配：逗号分隔，支持 * 、精确域名、.后缀 / 后缀、
+//  以及 host:port（只比 host 部分）。localhost / 127.0.0.1 永远直连。
+//
+int UpdateHostBypassed(const char *pszHost,const char *pszNoProxy)
+{
+  const char *p;
+  int cchHost;
+
+  if (!pszHost || !*pszHost)
+    return 0;
+
+  // 本机地址不必过代理
+  if (0 == StrcmpNIA(pszHost,"localhost",9) && (pszHost[9] == '\0' || pszHost[9] == ':'))
+    return 1;
+  if (0 == StrcmpNIA(pszHost,"127.0.0.1",9) && (pszHost[9] == '\0' || pszHost[9] == ':'))
+    return 1;
+  if (0 == StrcmpNIA(pszHost,"::1",3) && pszHost[3] == '\0')
+    return 1;
+
+  if (!pszNoProxy || !*pszNoProxy)
+    return 0;
+
+  cchHost = (int)strlen(pszHost);
+  p = pszNoProxy;
+  while (*p) {
+    const char *pStart,*pEnd;
+    int cchEntry;
+    char szEntry[128];
+    int i;
+
+    while (*p == ' ' || *p == '\t' || *p == ',')
+      p++;
+    if (!*p)
+      break;
+    pStart = p;
+    while (*p && *p != ',')
+      p++;
+    pEnd = p;
+    while (pEnd > pStart && (pEnd[-1] == ' ' || pEnd[-1] == '\t'))
+      pEnd--;
+
+    cchEntry = (int)(pEnd - pStart);
+    if (cchEntry <= 0 || cchEntry >= (int)sizeof(szEntry))
+      continue;
+    for (i = 0; i < cchEntry; i++)
+      szEntry[i] = pStart[i];
+    szEntry[i] = '\0';
+
+    if (0 == Strcasecmp(szEntry,"*"))
+      return 1;
+
+    // 去掉 host:port 里的端口
+    {
+      char *pColon = szEntry;
+      while (*pColon && *pColon != ':')
+        pColon++;
+      *pColon = '\0';
+    }
+    if (!szEntry[0])
+      continue;
+
+    // 去掉前导点：.example.com 视作 example.com 及其子域
+    {
+      const char *pDom = szEntry;
+      int cchDom;
+      if (*pDom == '.')
+        pDom++;
+      cchDom = (int)strlen(pDom);
+      if (cchDom <= 0)
+        continue;
+      if (cchDom == cchHost && 0 == StrcmpNIA(pDom,pszHost,cchDom))
+        return 1;
+      // 后缀匹配：host 必须以 "."+domain 结尾
+      if (cchHost > cchDom &&
+          0 == StrcmpNIA(pszHost + cchHost - cchDom,pDom,cchDom) &&
+          pszHost[cchHost - cchDom - 1] == '.')
+        return 1;
+    }
+  }
+
+  return 0;
+}

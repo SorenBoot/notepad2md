@@ -22,6 +22,12 @@ int UpdateVersionCmp(const char *pszA,const char *pszB);
 // 从 .../releases/tag/v0.0.2 取出 v0.0.2。成功返回 1。
 int UpdateExtractTagFromUrl(const char *pszUrl,char *pszOut,int cchOut);
 
+// 把各种代理写法转成 WinINet 认的格式。成功返回 1。
+int UpdateNormalizeProxy(const char *pszRaw,char *pszOut,int cchOut);
+
+// NO_PROXY 匹配。命中（应直连）返回 1。
+int UpdateHostBypassed(const char *pszHost,const char *pszNoProxy);
+
 // 远端版本是否比本地新。任一为空返回 0。
 int UpdateIsNewer(const char *pszLocal,const char *pszRemote);
 

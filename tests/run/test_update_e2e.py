@@ -181,7 +181,8 @@ def find_dialog(pid, timeout=15):
     return None
 
 
-def run_case(exe, name, latest, api, want_substrings, forbid=(), timeout=20, max_len=0):
+def run_case(exe, name, latest, api, want_substrings, forbid=(), timeout=20, max_len=0,
+             extra_env=None):
     """启动 exe → 点「检查更新」→ 读弹窗文字 → 断言。"""
     global g_latest, g_api
     g_latest = latest
@@ -191,6 +192,12 @@ def run_case(exe, name, latest, api, want_substrings, forbid=(), timeout=20, max
     env = dict(os.environ)
     env["NOTEPAD2MD_UPDATE_URL"] = URL + "/latest"
     env["NOTEPAD2MD_UPDATE_NOTES_URL"] = URL + "/api"
+    # 别让外面的代理设置干扰用例
+    for k in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy",
+              "all_proxy", "NO_PROXY", "no_proxy"):
+        env.pop(k, None)
+    if extra_env:
+        env.update(extra_env)
 
     proc = subprocess.Popen([exe], cwd=tmp, env=env)
     try:
@@ -295,7 +302,24 @@ def main():
                  (200, '{"body":"\\u4fee\\u590d\\uff1a\\u65e5\\u5fd7\\u914d\\u8272"}'),
                  ["9.9.8", "修复：日志配色"])
 
-        # 11. 超长发布说明：必须截断，不能把 1024 字符的缓冲写爆
+        # 11. 代理连不上 -> 自动兜底直连，仍然能查到
+        dead_proxy = socket.socket()
+        dead_proxy.bind(("127.0.0.1", 0))
+        dead_proxy_port = dead_proxy.getsockname()[1]
+        dead_proxy.close()
+        run_case(exe, "代理不通兜底直连", tag("v9.9.5"), (200, "{}"), ["9.9.5"],
+                 extra_env={"HTTPS_PROXY": "http://127.0.0.1:%d" % dead_proxy_port})
+
+        # 12. NO_PROXY 命中 -> 直接不过代理
+        run_case(exe, "NO_PROXY 直连", tag("v9.9.4"), (200, "{}"), ["9.9.4"],
+                 extra_env={"HTTPS_PROXY": "http://127.0.0.1:%d" % dead_proxy_port,
+                            "NO_PROXY": "127.0.0.1"})
+
+        # 13. 裸 host:port 写法的代理也能识别（同样走兜底）
+        run_case(exe, "裸 host:port 代理", tag("v9.9.3"), (200, "{}"), ["9.9.3"],
+                 extra_env={"HTTPS_PROXY": "127.0.0.1:%d" % dead_proxy_port})
+
+        # 14. 超长发布说明：必须截断，不能把 1024 字符的缓冲写爆
         long_body = chr(10).join(
             "第%d行 说明文字说明文字说明文字说明文字说明文字说明文字说明文字" % i
             for i in range(200))

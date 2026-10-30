@@ -88,12 +88,97 @@ static void Utf8ToWide(const char *pszUtf8,WCHAR *pszOut,int cchOut)
 
 //=============================================================================
 //
-//  HttpGet()
+//  代理支持
 //
-//  返回 1 = 拿到 200 响应体；0 = 失败（无网络 / 非 200 / 读失败）。
+//  优先级：HTTPS_PROXY / HTTP_PROXY / ALL_PROXY 环境变量 > 系统代理。
+//  NO_PROXY 命中的主机直连。
 //
-static int HttpGet(const WCHAR *pszUrl,char *pszBuf,int cbBuf,int *pcbGot,
-                   WCHAR *pszFinalUrl,int cchFinal)
+typedef struct _PROXYINFO {
+  DWORD dwAccessType;      // PRECONFIG / DIRECT / PROXY
+  WCHAR szProxy[256];      // dwAccessType == PROXY 时用
+} PROXYINFO;
+
+// 从 URL 里取主机名（窄串，给 NO_PROXY 匹配用）
+static void UrlHost(const WCHAR *pszUrl,char *pszHost,int cchHost)
+{
+  WCHAR szHost[256];
+  const WCHAR *p,*pEnd;
+  int i = 0;
+
+  pszHost[0] = '\0';
+  if (!pszUrl || !*pszUrl)
+    return;
+
+  p = pszUrl;
+  while (*p && *p != L'/' && *p != L':')
+    p++;                       // 跳过 https
+  if (*p == L':') {
+    p++;
+    while (*p == L'/')
+      p++;
+    pEnd = p;
+    while (*pEnd && *pEnd != L'/' && *pEnd != L':' && *pEnd != L'?')
+      pEnd++;
+    while (p < pEnd && i < COUNTOF(szHost) - 1)
+      szHost[i++] = *p++;
+    szHost[i] = L'\0';
+    WideCharToMultiByte(CP_ACP,0,szHost,-1,pszHost,cchHost,NULL,NULL);
+  }
+}
+
+// 读环境变量（宽 -> 窄），成功返回 1
+static int GetEnvA(const WCHAR *pszName,char *pszOut,int cchOut)
+{
+  WCHAR szBuf[512];
+
+  pszOut[0] = '\0';
+  if (GetEnvironmentVariableW(pszName,szBuf,COUNTOF(szBuf)) == 0 || !szBuf[0])
+    return 0;
+  WideCharToMultiByte(CP_ACP,0,szBuf,-1,pszOut,cchOut,NULL,NULL);
+  return (pszOut[0] != '\0');
+}
+
+// 决定这次请求走哪条路
+static void ProxyLoad(PROXYINFO *pInfo,const WCHAR *pszUrl)
+{
+  static const WCHAR *pszEnvList[] = {
+    L"HTTPS_PROXY",L"HTTP_PROXY",L"ALL_PROXY"
+  };
+  char szHost[256],szRaw[512],szProxy[512],szNoProxy[512];
+  int i;
+
+  pInfo->dwAccessType = INTERNET_OPEN_TYPE_PRECONFIG;
+  pInfo->szProxy[0] = L'\0';
+
+  UrlHost(pszUrl,szHost,COUNTOF(szHost));
+  GetEnvA(L"NO_PROXY",szNoProxy,COUNTOF(szNoProxy));
+  if (!szNoProxy[0])
+    GetEnvA(L"no_proxy",szNoProxy,COUNTOF(szNoProxy));
+
+  if (UpdateHostBypassed(szHost,szNoProxy)) {
+    pInfo->dwAccessType = INTERNET_OPEN_TYPE_DIRECT;
+    return;
+  }
+
+  for (i = 0; i < COUNTOF(pszEnvList); i++) {
+    if (GetEnvA(pszEnvList[i],szRaw,COUNTOF(szRaw)) &&
+        UpdateNormalizeProxy(szRaw,szProxy,COUNTOF(szProxy))) {
+      MultiByteToWideChar(CP_ACP,0,szProxy,-1,pInfo->szProxy,COUNTOF(pInfo->szProxy));
+      pInfo->dwAccessType = INTERNET_OPEN_TYPE_PROXY;
+      return;
+    }
+  }
+}
+
+//=============================================================================
+//
+//  HttpGetOnce()
+//
+//  按 pInfo 指定的方式请求一次。返回 1 = 拿到 200 响应体。
+//
+static int HttpGetOnce(const PROXYINFO *pInfo,const WCHAR *pszUrl,
+                       char *pszBuf,int cbBuf,int *pcbGot,
+                       WCHAR *pszFinalUrl,int cchFinal)
 {
   HINTERNET hNet,hUrl;
   DWORD dwStatus = 0,dwLen = sizeof(dwStatus);
@@ -104,7 +189,10 @@ static int HttpGet(const WCHAR *pszUrl,char *pszBuf,int cbBuf,int *pcbGot,
   if (pszFinalUrl && cchFinal > 0)
     pszFinalUrl[0] = L'\0';
 
-  hNet = InternetOpenW(UPDATE_UA,INTERNET_OPEN_TYPE_PRECONFIG,NULL,NULL,0);
+  hNet = InternetOpenW(UPDATE_UA,pInfo->dwAccessType,
+                       (pInfo->dwAccessType == INTERNET_OPEN_TYPE_PROXY) ?
+                         pInfo->szProxy : NULL,
+                       NULL,0);
   if (!hNet)
     return 0;
 
@@ -151,13 +239,44 @@ static int HttpGet(const WCHAR *pszUrl,char *pszBuf,int cbBuf,int *pcbGot,
   }
 
   pszBuf[cbTotal] = '\0';
-  *pcbGot = cbTotal;
+  if (pcbGot)
+    *pcbGot = cbTotal;
   bOk = 1;
 
 cleanup:
   InternetCloseHandle(hUrl);
   InternetCloseHandle(hNet);
   return bOk;
+}
+
+//=============================================================================
+//
+//  HttpGet()
+//
+//  先按配置的代理试一次；不行就直连再试一次。
+//
+//  为什么要兜底：代理出口常是共享 IP，GitHub API 对匿名请求的限额
+//  按 IP 算，出口被别人用光时会 403 —— 这时直连反而是通的。
+//  反过来（直连被墙、代理通）也一样。
+//
+static int HttpGet(const WCHAR *pszUrl,char *pszBuf,int cbBuf,int *pcbGot,
+                   WCHAR *pszFinalUrl,int cchFinal)
+{
+  PROXYINFO info;
+  PROXYINFO directInfo;
+
+  ProxyLoad(&info,pszUrl);
+
+  if (HttpGetOnce(&info,pszUrl,pszBuf,cbBuf,pcbGot,pszFinalUrl,cchFinal))
+    return 1;
+
+  // 已经直连了就没必要再试
+  if (info.dwAccessType == INTERNET_OPEN_TYPE_DIRECT)
+    return 0;
+
+  directInfo.dwAccessType = INTERNET_OPEN_TYPE_DIRECT;
+  directInfo.szProxy[0] = L'\0';
+  return HttpGetOnce(&directInfo,pszUrl,pszBuf,cbBuf,pcbGot,pszFinalUrl,cchFinal);
 }
 
 //=============================================================================

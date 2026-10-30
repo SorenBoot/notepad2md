@@ -133,6 +133,48 @@ int main(void)
     CheckStr(szBuf,"v3","多个 /tag/ 取最后一个");
   }
 
+  printf("== 代理写法归一 ==\n");
+  {
+    char szP[128];
+    CheckInt(UpdateNormalizeProxy("http://127.0.0.1:10809",szP,sizeof(szP)),1,"http:// 保留");
+    CheckStr(szP,"http://127.0.0.1:10809","http:// 原样");
+    UpdateNormalizeProxy("http://127.0.0.1:10809/",szP,sizeof(szP));
+    CheckStr(szP,"http://127.0.0.1:10809","尾部斜杠去掉");
+    UpdateNormalizeProxy("127.0.0.1:10809",szP,sizeof(szP));
+    CheckStr(szP,"http://127.0.0.1:10809","裸 host:port 补 http://");
+    UpdateNormalizeProxy("socks5://127.0.0.1:1080",szP,sizeof(szP));
+    CheckStr(szP,"socks=127.0.0.1:1080","socks5 转 socks=");
+    UpdateNormalizeProxy("socks://127.0.0.1:1080",szP,sizeof(szP));
+    CheckStr(szP,"socks=127.0.0.1:1080","socks 同上");
+    UpdateNormalizeProxy("  http://a.b:1  ",szP,sizeof(szP));
+    CheckStr(szP,"http://a.b:1","前后空白去掉");
+    CheckInt(UpdateNormalizeProxy("",szP,sizeof(szP)),0,"空串返回 0");
+    CheckInt(UpdateNormalizeProxy(NULL,szP,sizeof(szP)),0,"NULL 返回 0");
+    CheckInt(UpdateNormalizeProxy("http://",szP,sizeof(szP)),0,"只有协议头返回 0");
+    CheckInt(UpdateNormalizeProxy("http://a b:1",szP,sizeof(szP)),0,"中间有空格返回 0");
+    UpdateNormalizeProxy("https://1.2.3.4:8080",szP,sizeof(szP));
+    CheckStr(szP,"http://1.2.3.4:8080","https:// 换成 http://");
+  }
+
+  printf("== NO_PROXY 匹配 ==\n");
+  {
+    CheckInt(UpdateHostBypassed("localhost",""),1,"localhost 永远直连");
+    CheckInt(UpdateHostBypassed("127.0.0.1:5000",""),1,"127.0.0.1 永远直连");
+    CheckInt(UpdateHostBypassed("github.com",""),0,"无 NO_PROXY 不直连");
+    CheckInt(UpdateHostBypassed("github.com","*"),1,"星号全放行");
+    CheckInt(UpdateHostBypassed("github.com","github.com"),1,"精确匹配");
+    CheckInt(UpdateHostBypassed("api.github.com","github.com"),1,"父域匹配子域");
+    CheckInt(UpdateHostBypassed("github.com","api.github.com"),0,"子域不放行父域");
+    CheckInt(UpdateHostBypassed("notgithub.com","github.com"),0,"后缀不误伤");
+    CheckInt(UpdateHostBypassed("api.github.com",".github.com"),1,"前导点写法");
+    CheckInt(UpdateHostBypassed("github.com","a.com, b.com ,github.com"),1,"逗号列表含空格");
+    CheckInt(UpdateHostBypassed("x.com","a.com,b.com"),0,"列表都不匹配");
+    CheckInt(UpdateHostBypassed("api.github.com","api.github.com:443"),1,"条目带端口");
+    CheckInt(UpdateHostBypassed("","github.com"),0,"空 host 返回 0");
+    CheckInt(UpdateHostBypassed(NULL,"github.com"),0,"NULL host 返回 0");
+    CheckInt(UpdateHostBypassed("GITHUB.COM","github.com"),1,"大小写无关");
+  }
+
   printf("== UpdateIsNewer ==\n");
   CheckInt(UpdateIsNewer("0.0.2","v0.0.3"),1,"远端新");
   CheckInt(UpdateIsNewer("0.0.2","v0.0.2"),0,"同版本不算新");
