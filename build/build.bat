@@ -46,7 +46,7 @@ for %%F in (Notepad2 Edit Dialogs Styles Dlapi Helpers) do (
 )
 
 echo [2/4] 编译 Markdown / 大纲 / 运行命令 / 格式化模块 ...
-for %%F in (Markdown Preview Outline RunCmd Format Format_Json Format_Xml Format_Sql Format_Ini Format_Log FormatCmd) do (
+for %%F in (Markdown Preview Outline RunCmd Format Format_Json Format_Xml Format_Sql Format_Ini Format_Log FormatCmd UpdateCheck Update) do (
     gcc %DEF% %INC% %OPT% -c ..\src\%%F.c -o obj\%%F.o || goto :err
     set OBJS=!OBJS! obj\%%F.o
 )

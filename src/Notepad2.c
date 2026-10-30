@@ -40,6 +40,7 @@
 #include "Outline.h"
 #include "FormatCmd.h"
 #include "RunCmd.h"
+#include "Update.h"
 
 
 
@@ -979,6 +980,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd,UINT umsg,WPARAM wParam,LPARAM lParam)
 
     case WM_RUNCMD_DONE:
       RunCmd_OnDoneMessage(wParam);
+      break;
+
+    case WM_UPDATECHECK_DONE:
+      Update_OnDone(wParam,lParam);
       break;
 
 
@@ -4607,6 +4612,10 @@ LRESULT MsgCommand(HWND hwnd,WPARAM wParam,LPARAM lParam)
         MsgBox(MBWARN,IDS_CTXUNREG_FAIL);
       break;
 
+
+    case IDM_HELP_CHECKUPDATE:
+      Update_Check(hwnd);
+      break;
 
     case IDM_HELP_ABOUT:
       ThemedDialogBox(g_hInstance,MAKEINTRESOURCE(IDD_ABOUT),

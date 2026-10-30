@@ -334,6 +334,7 @@
 #define IDM_VIEW_OUTLINE                 40448
 #define IDM_OUTLINE_GOTO                 40449
 #define IDM_HELP_ABOUT                  40500
+#define IDM_HELP_CHECKUPDATE            40501
 #define IDM_TRAY_RESTORE                40600
 #define IDM_TRAY_EXIT                   40601
 
@@ -440,6 +441,10 @@
 #define IDS_FMT_ERR_SYNTAX             50068
 #define IDS_FMT_OK                     50069
 #define IDS_FMT_BIGFILE_CONFIRM        50070
+#define IDS_UPDATE_AVAILABLE           50071
+#define IDS_UPDATE_LATEST              50072
+#define IDS_UPDATE_FAILED              50073
+#define IDS_UPDATE_NO_NOTES            50074
 #define IDS_CMDLINEHELP                 60000
 
 // Next default values for new objects

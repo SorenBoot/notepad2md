@@ -96,6 +96,7 @@ notepad2md 是 [Notepad2 4.2.25](https://www.flos-freeware.ch/) 的二次开发�
 
 ### 其它
 
+- 帮助菜单 →「检查更新...」：查一下有没有新版本，有就给出发布说明并开浏览器到下载页（只检查，不自动安装）
 - Explorer 右键菜单「用 notepad2md 编辑」（只写 HKCU，可注销）
 - 零运行时依赖 —— 只依赖 Windows 系统 DLL（Win7 起全部自带）
 

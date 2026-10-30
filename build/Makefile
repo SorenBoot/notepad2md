@@ -124,6 +124,8 @@ MD_SRC := \
 	../src/Format_Ini.c \
 	../src/Format_Log.c \
 	../src/FormatCmd.c \
+	../src/UpdateCheck.c \
+	../src/Update.c \
 	../md4c/md4c.c
 
 C_OBJ   := $(N2_C_SRC:.c=.o) $(MD_SRC:.c=.o)

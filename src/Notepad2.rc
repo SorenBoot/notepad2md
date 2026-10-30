@@ -350,6 +350,8 @@ BEGIN
     END
     POPUP "&Help"
     BEGIN
+        MENUITEM "Check for &Updates...",           IDM_HELP_CHECKUPDATE
+        MENUITEM SEPARATOR
         MENUITEM "&About...\tF1",               IDM_HELP_ABOUT
     END
 END
@@ -1938,6 +1940,10 @@ BEGIN
     IDS_FMT_ERR_SYNTAX      "Syntax error."
     IDS_FMT_OK              "No syntax errors were found."
     IDS_FMT_BIGFILE_CONFIRM "The document is large. Continue formatting?"
+    IDS_UPDATE_AVAILABLE    "An update is available.\n\nCurrent version: %s\nNew version: %s\n\n%s\n\nOpen the download page?"
+    IDS_UPDATE_LATEST       "You are running the latest version, %s."
+    IDS_UPDATE_FAILED       "Could not reach GitHub.\n\nCheck your network connection and try again."
+    IDS_UPDATE_NO_NOTES     "(no release notes)"
 END
 
 #endif    // English (U.S.) resources
@@ -2280,6 +2286,8 @@ BEGIN
     END
     POPUP "帮助(&H)"
     BEGIN
+        MENUITEM "检查更新(&U)...",              IDM_HELP_CHECKUPDATE
+        MENUITEM SEPARATOR
         MENUITEM "关于(&A)...\tF1",               IDM_HELP_ABOUT
     END
 END
@@ -3870,6 +3878,10 @@ BEGIN
     IDS_FMT_ERR_SYNTAX      "语法错误。"
     IDS_FMT_OK              "未发现语法错误。"
     IDS_FMT_BIGFILE_CONFIRM "文档较大，确定要格式化吗？"
+    IDS_UPDATE_AVAILABLE    "发现新版本。\n\n当前版本：%s\n最新版本：%s\n\n%s\n\n是否打开下载页面？"
+    IDS_UPDATE_LATEST       "已是最新版本 %s。"
+    IDS_UPDATE_FAILED       "无法连接 GitHub。\n\n请检查网络连接后重试。"
+    IDS_UPDATE_NO_NOTES     "（该版本没有发布说明）"
 END
 
 #endif    // Chinese (Simplified, PRC) resources
